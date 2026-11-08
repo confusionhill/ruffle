@@ -103,6 +103,10 @@ final class ViewController: UIViewController {
     private var floatingTopConstraint: NSLayoutConstraint?
     private var floatingTrailingConstraint: NSLayoutConstraint?
 
+    // Floating quick actions (e.g. Bank)
+    private let bankBlurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterialDark))
+    private let bankButton = UIButton(type: .system)
+
     private var entries: [TelemetryEntry] = []
     private var loadProgress: Int?
     private var isMovieLoaded = false
@@ -129,6 +133,7 @@ final class ViewController: UIViewController {
         view.backgroundColor = .black
         setupFullScreenPlayer()
         setupFloatingButton()
+        setupBankButton()
         wirePlayerCallbacks()
         loadBundledSwf()
         startMetricsTimer()
@@ -158,8 +163,10 @@ final class ViewController: UIViewController {
         let show = floatingBlurView.alpha < 0.5
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         floatingBlurView.isUserInteractionEnabled = show
+        bankBlurView.isUserInteractionEnabled = show
         UIView.animate(withDuration: 0.2) {
             self.floatingBlurView.alpha = show ? 1 : 0
+            self.bankBlurView.alpha = show ? 1 : 0
         }
     }
 
@@ -232,6 +239,65 @@ final class ViewController: UIViewController {
         floatingBlurView.addGestureRecognizer(pan)
 
         updateFloatingBadge(latestSample: nil)
+    }
+
+    private func setupBankButton() {
+        bankBlurView.translatesAutoresizingMaskIntoConstraints = false
+        bankBlurView.layer.cornerRadius = 18
+        bankBlurView.layer.cornerCurve = .continuous
+        bankBlurView.clipsToBounds = true
+        bankBlurView.layer.borderWidth = 0.5
+        bankBlurView.layer.borderColor = UIColor.white.withAlphaComponent(0.22).cgColor
+        view.addSubview(bankBlurView)
+
+        var config = UIButton.Configuration.plain()
+        config.baseForegroundColor = .systemYellow
+        config.cornerStyle = .capsule
+        config.image = UIImage(
+            systemName: "building.columns.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold)
+        )
+        config.imagePadding = 6
+        config.title = "Bank"
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = UIFont.systemFont(ofSize: 12, weight: .bold)
+            return outgoing
+        }
+        bankButton.configuration = config
+        bankButton.translatesAutoresizingMaskIntoConstraints = false
+        bankButton.addTarget(self, action: #selector(handleBankButtonTapped), for: .touchUpInside)
+        bankBlurView.contentView.addSubview(bankButton)
+
+        NSLayoutConstraint.activate([
+            bankBlurView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            bankBlurView.trailingAnchor.constraint(equalTo: floatingBlurView.leadingAnchor, constant: -10),
+            bankBlurView.heightAnchor.constraint(equalToConstant: 36),
+
+            bankButton.topAnchor.constraint(equalTo: bankBlurView.contentView.topAnchor),
+            bankButton.bottomAnchor.constraint(equalTo: bankBlurView.contentView.bottomAnchor),
+            bankButton.leadingAnchor.constraint(equalTo: bankBlurView.contentView.leadingAnchor),
+            bankButton.trailingAnchor.constraint(equalTo: bankBlurView.contentView.trailingAnchor),
+        ])
+    }
+
+    @objc private func handleBankButtonTapped() {
+        guard let player = flashPlayerView.player else { return }
+
+        // Check if bank is already open via ActionScript API
+        let isOpenResult = player.callExternalInterface(name: "bank.isOpen", arguments: [])
+        let isBankOpen = (isOpenResult as? Bool) ?? false
+
+        if isBankOpen {
+            appendEntry(method: "Bank", detail: "bank.isOpen == true; skipping bank.open request", isSystem: true)
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            return
+        }
+
+        appendEntry(method: "Bank", detail: "Calling bank.open via ExternalInterface...", isSystem: true)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        player.callExternalInterface(name: "bank.open", arguments: [])
     }
 
     private func updateFloatingBadge(latestSample: PerformanceSample? = nil) {

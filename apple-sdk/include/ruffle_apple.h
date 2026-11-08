@@ -131,6 +131,9 @@ void ruffle_player_touch_move(RufflePlayerHandle* handle, double x, double y);
 /// Dispatches a touch/mouse release at physical pixel coordinates `(x, y)`.
 void ruffle_player_touch_up(RufflePlayerHandle* handle, double x, double y);
 
+/// Dispatches a mouse scroll wheel delta (in lines). Positive delta_y scrolls up, negative down.
+void ruffle_player_mouse_wheel(RufflePlayerHandle* handle, double delta_x, double delta_y);
+
 /// Sends UTF-8 text input (from `UIKeyInput.insertText` or hardware keyboard) to the focused text field.
 void ruffle_player_text_input(
     RufflePlayerHandle* handle,

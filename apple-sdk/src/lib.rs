@@ -13,8 +13,8 @@ use ruffle_core::backend::ui::{
 use ruffle_core::config::Letterbox;
 use ruffle_core::context::UpdateContext;
 use ruffle_core::events::{
-    KeyDescriptor, KeyLocation, LogicalKey, MouseButton, NamedKey, PhysicalKey, PlayerEvent,
-    TextControlCode,
+    KeyDescriptor, KeyLocation, LogicalKey, MouseButton, MouseWheelDelta, NamedKey, PhysicalKey,
+    PlayerEvent, TextControlCode,
 };
 use ruffle_core::external::{ExternalInterfaceProvider, Value as ExternalValue};
 use ruffle_core::font::FontQuery;
@@ -971,6 +971,30 @@ pub unsafe extern "C" fn ruffle_player_touch_up(handle: *mut RufflePlayerHandle,
                 x,
                 y,
                 button: MouseButton::Left,
+            });
+            player.mutate_with_update_context(|context| {
+                *context.needs_render = true;
+            });
+        }
+        handle.drain_tasks();
+    }));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruffle_player_mouse_wheel(
+    handle: *mut RufflePlayerHandle,
+    delta_x: f64,
+    delta_y: f64,
+) {
+    if handle.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _guard = tokio_runtime().enter();
+        let handle = unsafe { &mut *handle };
+        if let Ok(mut player) = handle.player.lock() {
+            player.handle_event(PlayerEvent::MouseWheel {
+                delta: MouseWheelDelta::Lines(delta_y),
             });
             player.mutate_with_update_context(|context| {
                 *context.needs_render = true;

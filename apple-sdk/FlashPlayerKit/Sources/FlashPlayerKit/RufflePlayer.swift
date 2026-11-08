@@ -287,6 +287,12 @@ public final class RufflePlayer: ObservableObject {
         ruffle_player_touch_up(handle, x, y)
     }
 
+    /// Sends a mouse scroll wheel event with delta values (positive deltaY is scroll up).
+    public func mouseWheel(deltaX: Double, deltaY: Double) {
+        guard let handle else { return }
+        ruffle_player_mouse_wheel(handle, deltaX, deltaY)
+    }
+
     /// Sends UTF-8 text input to the focused Flash `TextField`.
     public func insertText(_ text: String) {
         guard let handle, !text.isEmpty else { return }
