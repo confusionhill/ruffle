@@ -21,6 +21,8 @@ pub struct AppState {
     pub status_message: String,
     pub expanded_packages: HashSet<String>,
     pub expanded_classes: HashSet<String>,
+    pub cached_as3_lines: Vec<crate::syntax::HighlightedLine>,
+    pub cached_disasm_lines: Vec<crate::syntax::HighlightedLine>,
 }
 
 impl Default for AppState {
@@ -36,11 +38,29 @@ impl Default for AppState {
             status_message: "Ready. Click 'Open SWF' or drop a file to decompile.".to_string(),
             expanded_packages: HashSet::new(),
             expanded_classes: HashSet::new(),
+            cached_as3_lines: Vec::new(),
+            cached_disasm_lines: Vec::new(),
         }
     }
 }
 
 impl AppState {
+    pub fn update_cache(&mut self, theme: &crate::theme::Theme) {
+        let (as3_text, disasm_text) = if let Some(m) = self.selected_method() {
+            (m.as3_source.clone(), m.disassembly.clone())
+        } else if let Some(c) = self.selected_class() {
+            (c.as3_source.clone(), c.bytecode_text.clone())
+        } else {
+            (
+                "// Select a class or method from the sidebar, or click 'Open SWF'".to_string(),
+                "// Select a class or method from the sidebar, or click 'Open SWF'".to_string(),
+            )
+        };
+
+        self.cached_as3_lines = crate::syntax::SyntaxHighlighter::highlight_as3(&as3_text, theme);
+        self.cached_disasm_lines = crate::syntax::SyntaxHighlighter::highlight_disassembly(&disasm_text, theme);
+    }
+
     pub fn selected_class(&self) -> Option<&ClassInfo> {
         let id = self.selected_class_id.as_ref()?;
         let project = self.project.as_ref()?;

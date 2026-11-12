@@ -19,8 +19,39 @@ pub struct DecompiledProject {
     pub packages: Vec<PackageInfo>,
 }
 
+impl DecompiledProject {
+    pub fn export_to_zip<W: std::io::Write + std::io::Seek>(&self, writer: W) -> anyhow::Result<usize> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let mut zip = ZipWriter::new(writer);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        let mut count = 0;
+        for pkg in &self.packages {
+            for class in &pkg.classes {
+                let file_path = if pkg.name.is_empty() {
+                    format!("{}.as", class.name)
+                } else {
+                    format!("{}/{}.as", pkg.name.replace('.', "/"), class.name)
+                };
+
+                zip.start_file(file_path, options)?;
+                zip.write_all(class.as3_source.as_bytes())?;
+                count += 1;
+            }
+        }
+
+        zip.finish()?;
+        Ok(count)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PackageInfo {
+
     pub name: String,
     pub classes: Vec<ClassInfo>,
     pub scripts: Vec<ScriptInfo>,

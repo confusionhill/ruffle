@@ -1,5 +1,4 @@
 use crate::state::{AppState, ViewMode};
-use crate::syntax::SyntaxHighlighter;
 use crate::theme::Theme;
 use as3_decompiler_core::ProjectBuilder;
 use gpui::*;
@@ -12,10 +11,12 @@ pub struct DecompilerApp {
 
 impl DecompilerApp {
     pub fn new() -> Self {
-        Self {
+        let mut app = Self {
             state: AppState::default(),
             theme: Theme::default(),
-        }
+        };
+        app.state.update_cache(&app.theme);
+        app
     }
 
     pub fn load_swf_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -56,6 +57,7 @@ impl DecompilerApp {
                             duration.as_secs_f64() * 1000.0
                         );
                         self.state.project = Some(project);
+                        self.state.update_cache(&self.theme);
                     }
                     Err(e) => {
                         self.state.status_message = format!("Error decompiling SWF: {}", e);
@@ -115,6 +117,49 @@ impl DecompilerApp {
         }
     }
 
+    fn export_all_as_zip(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = &self.state.project else {
+            self.state.status_message = "No SWF loaded to export.".to_string();
+            cx.notify();
+            return;
+        };
+
+        let default_zip = if let Some(name) = &self.state.current_file_name {
+            if let Some(base) = name.strip_suffix(".swf") {
+                format!("{}_src.zip", base)
+            } else {
+                format!("{}.zip", name)
+            }
+        } else {
+            "decompiled_src.zip".to_string()
+        };
+
+        if let Some(dest) = rfd::FileDialog::new()
+            .set_file_name(&default_zip)
+            .add_filter("ZIP Archive", &["zip"])
+            .save_file()
+        {
+            match std::fs::File::create(&dest) {
+                Ok(file) => match project.export_to_zip(file) {
+                    Ok(count) => {
+                        self.state.status_message = format!(
+                            "Exported all {} classes to {:?}",
+                            count,
+                            dest.file_name().unwrap_or_default()
+                        );
+                    }
+                    Err(e) => {
+                        self.state.status_message = format!("Export error: {}", e);
+                    }
+                },
+                Err(e) => {
+                    self.state.status_message = format!("Failed to create file: {}", e);
+                }
+            }
+            cx.notify();
+        }
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let file_name = self.state.current_file_name.as_deref().unwrap_or("No SWF loaded");
         let meta_info = if let Some(p) = &self.state.project {
@@ -131,17 +176,19 @@ impl DecompilerApp {
         };
 
         div()
-            .h(px(48.0))
+            .h(px(52.0))
             .w_full()
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
-            .px_4()
+            // Placed 84px left padding so macOS traffic lights (at x=12) never collide with content!
+            .pl(px(84.0))
+            .pr_4()
             .bg(self.theme.bg_header)
             .border_b_1()
             .border_color(self.theme.border)
-            // Left: Logo & Open Button
+            // Left: Logo, Open Button, File Info
             .child(
                 div()
                     .flex()
@@ -150,16 +197,10 @@ impl DecompilerApp {
                     .gap_3()
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(self.theme.text_accent)
-                                    .child("⚡ AS3 WIZARD")
-                            )
+                            .text_sm()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(self.theme.text_accent)
+                            .child("⚡ AS3 WIZARD")
                     )
                     .child(
                         div()
@@ -203,7 +244,7 @@ impl DecompilerApp {
                             )
                     )
             )
-            // Right: View Mode Toggle & Actions
+            // Right: View Mode Toggle & Actions (including Export All ZIP)
             .child(
                 div()
                     .flex()
@@ -241,7 +282,7 @@ impl DecompilerApp {
                                 this.copy_current_code(cx);
                             }))
                     )
-                    // Export button
+                    // Export .as button
                     .child(
                         div()
                             .px_3()
@@ -256,6 +297,24 @@ impl DecompilerApp {
                             .child("💾 Export .as")
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, _window, cx| {
                                 this.export_current_class(cx);
+                            }))
+                    )
+                    // Export All as ZIP button
+                    .child(
+                        div()
+                            .px_3()
+                            .py_1()
+                            .bg(self.theme.bg_selected)
+                            .hover(|s| s.bg(self.theme.bg_button_hover).cursor_pointer())
+                            .rounded_md()
+                            .border_1()
+                            .border_color(self.theme.text_accent)
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(self.theme.text_accent)
+                            .child("📦 Export All (ZIP)")
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, _window, cx| {
+                                this.export_all_as_zip(cx);
                             }))
                     )
             )
@@ -360,6 +419,7 @@ impl DecompilerApp {
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _event, _window, cx| {
                                             this.state.selected_class_id = Some(cid.clone());
                                             this.state.selected_method_name = Some(ctor_name.clone());
+                                            this.state.update_cache(&this.theme);
                                             cx.notify();
                                         }))
                                 );
@@ -415,6 +475,7 @@ impl DecompilerApp {
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _event, _window, cx| {
                                             this.state.selected_class_id = Some(cid.clone());
                                             this.state.selected_method_name = Some(tname.clone());
+                                            this.state.update_cache(&this.theme);
                                             cx.notify();
                                         }))
                                 );
@@ -490,6 +551,7 @@ impl DecompilerApp {
                                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _event, _window, cx| {
                                             this.state.selected_class_id = Some(class_id_for_select.clone());
                                             this.state.selected_method_name = None;
+                                            this.state.update_cache(&this.theme);
                                             cx.notify();
                                         }))
                                 )
@@ -570,11 +632,11 @@ impl DecompilerApp {
             )
     }
 
-    fn render_code_panel(&self, title: &str, content: &str, is_bytecode: bool) -> impl IntoElement {
-        let lines = if is_bytecode {
-            SyntaxHighlighter::highlight_disassembly(content, &self.theme)
+    fn render_code_panel(&self, title: &str, is_bytecode: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let line_count = if is_bytecode {
+            self.state.cached_disasm_lines.len()
         } else {
-            SyntaxHighlighter::highlight_as3(content, &self.theme)
+            self.state.cached_as3_lines.len()
         };
 
         div()
@@ -601,70 +663,84 @@ impl DecompilerApp {
                             .child(title.to_string())
                     )
             )
-            // Scrollable code view with line numbers
+            // High-performance virtualized list: renders only the visible lines on screen!
             .child(
                 div()
-                    .id(if is_bytecode { "code_scroll_bytecode" } else { "code_scroll_as3" })
                     .flex_1()
-                    .overflow_scroll()
+                    .h_full()
                     .p_2()
+                    .font_family("Courier New")
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .font_family("Courier New")
-                            .children(lines.into_iter().map(|line| {
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .h(px(20.0))
-                                    .child(
-                                        div()
-                                            .w(px(40.0))
-                                            .text_right()
-                                            .pr_3()
-                                            .text_xs()
-                                            .text_color(self.theme.text_muted)
-                                            .child(format!("{}", line.line_number))
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .text_xs()
-                                            .children(line.spans.into_iter().map(|span| {
-                                                div()
-                                                    .text_color(span.color)
-                                                    .child(span.text)
-                                            }))
-                                    )
-                            }))
+                        uniform_list(
+                            if is_bytecode { "code_list_bc" } else { "code_list_as3" },
+                            line_count,
+                            cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
+                                let lines = if is_bytecode {
+                                    &this.state.cached_disasm_lines
+                                } else {
+                                    &this.state.cached_as3_lines
+                                };
+
+                                let mut items = Vec::with_capacity(range.len());
+                                for ix in range {
+                                    if let Some(line) = lines.get(ix) {
+                                        items.push(
+                                            div()
+                                                .id(ix)
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .h(px(20.0))
+                                                .child(
+                                                    div()
+                                                        .w(px(45.0))
+                                                        .text_right()
+                                                        .pr_3()
+                                                        .text_xs()
+                                                        .text_color(this.theme.text_muted)
+                                                        .child(format!("{}", line.line_number))
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_row()
+                                                        .items_center()
+                                                        .text_xs()
+                                                        .children(line.spans.iter().map(|span| {
+                                                            div()
+                                                                .text_color(span.color)
+                                                                .child(span.text.clone())
+                                                        }))
+                                                )
+                                        );
+                                    }
+                                }
+                                items
+                            }),
+                        )
+                        .h_full()
                     )
             )
     }
 
-    fn render_content_area(&self) -> impl IntoElement {
+    fn render_content_area(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let class = self.state.selected_class();
         let method = self.state.selected_method();
 
-        let (_class_name, as3_title, bc_title, as3_source, bc_source) = if let Some(m) = method {
+        let (_class_name, as3_title, bc_title) = if let Some(m) = method {
             let cname = class.map(|c| c.name.as_str()).unwrap_or("");
             let mtitle_as3 = format!("{} > {}() (ActionScript 3)", cname, m.name);
             let mtitle_bc = format!("{} > {}() (AVM2 Bytecode Disassembly)", cname, m.name);
-            (cname, mtitle_as3, mtitle_bc, m.as3_source.clone(), m.disassembly.clone())
+            (cname, mtitle_as3, mtitle_bc)
         } else if let Some(c) = class {
             let ctitle_as3 = format!("{}.as (ActionScript 3)", c.name);
             let ctitle_bc = format!("{}.as (AVM2 Bytecode Disassembly)", c.name);
-            (c.name.as_str(), ctitle_as3, ctitle_bc, c.as3_source.clone(), c.bytecode_text.clone())
+            (c.name.as_str(), ctitle_as3, ctitle_bc)
         } else {
             (
                 "No selection",
                 "No class selected".to_string(),
                 "No class selected".to_string(),
-                "// Select a class or method from the sidebar, or click 'Open SWF'".to_string(),
-                "// Select a class or method from the sidebar, or click 'Open SWF'".to_string(),
             )
         };
 
@@ -672,24 +748,24 @@ impl DecompilerApp {
             ViewMode::DecompiledAs3 => div()
                 .flex_1()
                 .h_full()
-                .child(self.render_code_panel(&as3_title, &as3_source, false)),
+                .child(self.render_code_panel(&as3_title, false, cx)),
             ViewMode::Disassembly => div()
                 .flex_1()
                 .h_full()
-                .child(self.render_code_panel(&bc_title, &bc_source, true)),
+                .child(self.render_code_panel(&bc_title, true, cx)),
             ViewMode::Split => div()
                 .flex_1()
                 .h_full()
                 .flex()
                 .flex_row()
-                .child(self.render_code_panel(&as3_title, &as3_source, false))
+                .child(self.render_code_panel(&as3_title, false, cx))
                 .child(
                     div()
                         .w(px(1.0))
                         .h_full()
                         .bg(self.theme.border)
                 )
-                .child(self.render_code_panel(&bc_title, &bc_source, true)),
+                .child(self.render_code_panel(&bc_title, true, cx)),
         }
     }
 
@@ -743,7 +819,7 @@ impl Render for DecompilerApp {
                     .flex_row()
                     .overflow_hidden()
                     .child(self.render_sidebar(cx))
-                    .child(self.render_content_area())
+                    .child(self.render_content_area(cx))
             )
             // Bottom Status Bar
             .child(self.render_status_bar())

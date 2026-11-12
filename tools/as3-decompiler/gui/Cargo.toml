@@ -12,3 +12,4 @@ gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "r
 rfd = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+zip = { workspace = true }
