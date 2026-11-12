@@ -39,11 +39,9 @@ members = [
     "tools/asc",
     "tools/fuzzer",
     "tools/stub-report",
-    "tools/as3-decompiler/core",
-    "tools/as3-decompiler/gui",
 ]
 default-members = ["desktop"]
-exclude = ["vendor"]
+exclude = ["vendor", "tools/as3-decompiler"]
 resolver = "2"
 
 [workspace.package]

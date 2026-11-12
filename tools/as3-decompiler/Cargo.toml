@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "core",
+    "gui",
+]
+resolver = "2"
+
+[workspace.package]
+authors = ["AS3 Decompiler Team"]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+rfd = "0.15"
