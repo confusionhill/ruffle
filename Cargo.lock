@@ -232,6 +232,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175571dd1d178ced59193a6fc02dde1b972eb0bc56c892cde9beeceac5bf0f6b"
 
 [[package]]
+name = "as3-decompiler-core"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "serde",
+ "swf 0.3.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "asc"
 version = "0.6.0"
 dependencies = [

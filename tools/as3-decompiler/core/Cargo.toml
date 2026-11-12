@@ -1,0 +1,19 @@
+[package]
+name = "as3-decompiler-core"
+description = "AS3 (ActionScript 3) Decompiler and Disassembler engine powered by Ruffle SWF/AVM2."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+swf = { path = "../../../swf" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+log = { workspace = true }
