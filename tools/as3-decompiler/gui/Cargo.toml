@@ -1,0 +1,19 @@
+[package]
+name = "as3-decompiler-gui"
+description = "Modern, minimalist ActionScript 3 Decompiler app inspired by AS3 Sorcerer."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+as3-decompiler-core = { path = "../core" }
+gpui = { version = "0.2.2", default-features = false, features = ["runtime_shaders"] }
+rfd = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }

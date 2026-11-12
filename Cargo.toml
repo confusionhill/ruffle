@@ -40,6 +40,7 @@ members = [
     "tools/fuzzer",
     "tools/stub-report",
     "tools/as3-decompiler/core",
+    "tools/as3-decompiler/gui",
 ]
 default-members = ["desktop"]
 exclude = ["vendor"]

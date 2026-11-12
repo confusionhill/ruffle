@@ -28,3 +28,4 @@ fn test_decompile_real_swf() {
         }
     }
 }
+
