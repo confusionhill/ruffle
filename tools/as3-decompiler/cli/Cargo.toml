@@ -1,0 +1,18 @@
+[package]
+name = "as3-decompiler-cli"
+description = "Headless CLI for the AS3 Decompiler powered by Ruffle SWF/AVM2."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "as3-decompiler"
+path = "src/main.rs"
+
+[dependencies]
+as3-decompiler-core = { path = "../core" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
