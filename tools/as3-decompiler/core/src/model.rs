@@ -19,8 +19,31 @@ pub struct DecompiledProject {
     pub packages: Vec<PackageInfo>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportMode {
+    As3,
+    Bytecode,
+    Both,
+}
+
+fn class_rel_path(pkg_name: &str, class_name: &str, ext: &str) -> String {
+    if pkg_name.is_empty() {
+        format!("{class_name}.{ext}")
+    } else {
+        format!("{}/{class_name}.{ext}", pkg_name.replace('.', "/"))
+    }
+}
+
 impl DecompiledProject {
     pub fn export_to_zip<W: std::io::Write + std::io::Seek>(&self, writer: W) -> anyhow::Result<usize> {
+        self.export_to_zip_with_mode(writer, ExportMode::As3)
+    }
+
+    pub fn export_to_zip_with_mode<W: std::io::Write + std::io::Seek>(
+        &self,
+        writer: W,
+        mode: ExportMode,
+    ) -> anyhow::Result<usize> {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
@@ -32,19 +55,51 @@ impl DecompiledProject {
         let mut count = 0;
         for pkg in &self.packages {
             for class in &pkg.classes {
-                let file_path = if pkg.name.is_empty() {
-                    format!("{}.as", class.name)
-                } else {
-                    format!("{}/{}.as", pkg.name.replace('.', "/"), class.name)
-                };
-
-                zip.start_file(file_path, options)?;
-                zip.write_all(class.as3_source.as_bytes())?;
-                count += 1;
+                if matches!(mode, ExportMode::As3 | ExportMode::Both) {
+                    let file_path = class_rel_path(&pkg.name, &class.name, "as");
+                    zip.start_file(file_path, options)?;
+                    zip.write_all(class.as3_source.as_bytes())?;
+                    count += 1;
+                }
+                if matches!(mode, ExportMode::Bytecode | ExportMode::Both) {
+                    let file_path = class_rel_path(&pkg.name, &class.name, "asm");
+                    zip.start_file(file_path, options)?;
+                    zip.write_all(class.bytecode_text.as_bytes())?;
+                    count += 1;
+                }
             }
         }
 
         zip.finish()?;
+        Ok(count)
+    }
+
+    pub fn export_to_dir(
+        &self,
+        out_dir: &std::path::Path,
+        mode: ExportMode,
+    ) -> anyhow::Result<usize> {
+        let mut count = 0;
+        for pkg in &self.packages {
+            for class in &pkg.classes {
+                if matches!(mode, ExportMode::As3 | ExportMode::Both) {
+                    let dest = out_dir.join(class_rel_path(&pkg.name, &class.name, "as"));
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&dest, class.as3_source.as_bytes())?;
+                    count += 1;
+                }
+                if matches!(mode, ExportMode::Bytecode | ExportMode::Both) {
+                    let dest = out_dir.join(class_rel_path(&pkg.name, &class.name, "asm"));
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&dest, class.bytecode_text.as_bytes())?;
+                    count += 1;
+                }
+            }
+        }
         Ok(count)
     }
 }

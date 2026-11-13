@@ -7,8 +7,8 @@ pub mod model;
 pub mod project_builder;
 
 pub use model::{
-    ClassInfo, DecompiledProject, MethodInfo, PackageInfo, ParamInfo, ScriptInfo, SwfMetadata,
-    TraitInfo, TraitKindInfo,
+    ClassInfo, DecompiledProject, ExportMode, MethodInfo, PackageInfo, ParamInfo, ScriptInfo,
+    SwfMetadata, TraitInfo, TraitKindInfo,
 };
 pub use project_builder::ProjectBuilder;
 
