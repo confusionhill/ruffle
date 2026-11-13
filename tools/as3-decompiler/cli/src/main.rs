@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use as3_decompiler_core::{
-    ClassInfo, DecompiledProject, ExportMode, ProjectBuilder, SwfMetadata, TraitKindInfo,
+    patch_swf_with_code, ClassInfo, DecompiledProject, ExportMode, ProjectBuilder, SwfMetadata,
+    TraitKindInfo,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -70,6 +71,17 @@ enum Commands {
         /// Write JSON output to a file instead of stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Patch a base/asset SWF (e.g. from Anichraft) with AS3 DoABC & SymbolClass tags from a code SWF.
+    Patch {
+        /// Base/asset SWF file (preserving visual tags, dimensions, and framerate).
+        base: PathBuf,
+        /// Code SWF file containing DoABC/DoABC2 and SymbolClass tags (e.g. compiled with mxmlc).
+        #[arg(short, long)]
+        code: PathBuf,
+        /// Output patched SWF file path.
+        #[arg(short, long)]
+        output: PathBuf,
     },
 }
 
@@ -365,6 +377,25 @@ fn main() -> Result<()> {
             let project = load_project(&input)?;
             run_json(&project, pretty, summary, output.as_deref())?;
         }
+        Commands::Patch { base, code, output } => {
+            let base_bytes = std::fs::read(&base)
+                .with_context(|| format!("Failed to read base SWF '{}'", base.display()))?;
+            let code_bytes = std::fs::read(&code)
+                .with_context(|| format!("Failed to read code SWF '{}'", code.display()))?;
+            let patched = patch_swf_with_code(&base_bytes, &code_bytes)?;
+            if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&output, &patched)
+                .with_context(|| format!("Failed to write patched SWF '{}'", output.display()))?;
+            println!(
+                "Patched '{}' with AS3 code from '{}' -> '{}' ({} bytes)",
+                base.display(),
+                code.display(),
+                output.display(),
+                patched.len()
+            );
+        }
     }
 
     Ok(())
@@ -409,3 +440,4 @@ mod tests {
         }
     }
 }
+
