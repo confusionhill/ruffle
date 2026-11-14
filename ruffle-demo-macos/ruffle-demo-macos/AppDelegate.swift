@@ -70,7 +70,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, !self.hasLoadedInitialSWF else { return }
-            self.openSWFPanel()
+            if let defaultSWF = Bundle.main.url(forResource: "loader-animation", withExtension: "swf") {
+                self.loadSWF(url: defaultSWF)
+            } else {
+                self.openSWFPanel()
+            }
         }
     }
 
