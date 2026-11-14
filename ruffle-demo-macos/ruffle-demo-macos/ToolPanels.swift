@@ -508,3 +508,4 @@ struct TravelFollowerReloginPanelView: View {
         .frame(minWidth: 620, minHeight: 420)
     }
 }
+

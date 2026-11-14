@@ -27,6 +27,7 @@ RECOVER_*.fla
 
 # Apple / SwiftPM / Xcode build artifacts and user state
 /apple-sdk/RuffleApple.xcframework/
+/ruffle-demo-macos/build/
 **/.build/
 **/.swiftpm/
 **/xcuserdata/
