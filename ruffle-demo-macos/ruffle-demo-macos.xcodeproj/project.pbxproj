@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		2A5CE8B3309C9900007FFD20 /* FlashPlayerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2A5CE8B2309C9900007FFD20 /* FlashPlayerKit */; };
+		2A5CE8B6309C9900007FFD20 /* LuaKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2A5CE8B5309C9900007FFD20 /* LuaKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			files = (
 				2A5CE8B3309C9900007FFD20 /* FlashPlayerKit in Frameworks */,
+				2A5CE8B6309C9900007FFD20 /* LuaKit in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -95,6 +97,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				2A5CE8B1309C9900007FFD20 /* XCLocalSwiftPackageReference "../apple-sdk/FlashPlayerKit" */,
+				2A5CE8B4309C9900007FFD20 /* XCLocalSwiftPackageReference "../apple-sdk/LuaKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2A5CE8A3309C98BA007FFD20 /* Products */;
@@ -339,6 +342,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../apple-sdk/FlashPlayerKit";
 		};
+		2A5CE8B4309C9900007FFD20 /* XCLocalSwiftPackageReference "../apple-sdk/LuaKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../apple-sdk/LuaKit";
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -346,6 +353,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2A5CE8B1309C9900007FFD20 /* XCLocalSwiftPackageReference "../apple-sdk/FlashPlayerKit" */;
 			productName = FlashPlayerKit;
+		};
+		2A5CE8B5309C9900007FFD20 /* LuaKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2A5CE8B4309C9900007FFD20 /* XCLocalSwiftPackageReference "../apple-sdk/LuaKit" */;
+			productName = LuaKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+import LuaKit
 
 // MARK: - 1. Environment Panel (Drops, Quests, Boosts)
 
@@ -508,4 +510,124 @@ struct TravelFollowerReloginPanelView: View {
         .frame(minWidth: 620, minHeight: 420)
     }
 }
+
+// MARK: - 6. Script Runner (Lua 5.4) Panel
+
+struct ScriptRunnerPanelView: View {
+    @ObservedObject var engine: LuaEngine
+    let sdk: LuaLucentSDK
+
+    @State private var scriptName = "bot.lua"
+    @State private var scriptSource = """
+    -- Sample Lucent Lua Script
+    print("Map:", player.map(), "HP:", player.hp(), "/", player.maxHp())
+
+    env.whitelistDrop("Bone Dust")
+    env.enableDrops(true)
+
+    for i = 1, 5 do
+        if player.isLoaded() then
+            if player.hp() < (player.maxHp() * 0.4) then
+                print("Low HP, resting...")
+                player.rest()
+                sleep(1500)
+            else
+                kill("*")
+            end
+        end
+        sleep(250)
+    end
+    print("Done!")
+    """
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button("Open .lua…") { openScript() }
+                Button("Save .lua…") { saveScript() }
+                Button("Reset State") { sdk.resetAndReload() }
+                    .disabled(engine.isRunning)
+
+                Spacer()
+
+                Text(engine.statusText)
+                    .font(.caption)
+                    .foregroundStyle(engine.lastError != nil ? .red : .secondary)
+
+                Button(engine.isRunning ? "Stop" : "Run") {
+                    if engine.isRunning {
+                        engine.stop()
+                    } else {
+                        engine.run(scriptSource, name: scriptName)
+                    }
+                }
+                .keyboardShortcut(.return, modifiers: [.command])
+            }
+
+            VSplitView {
+                TextEditor(text: $scriptSource)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 200)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Console")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Clear") { engine.clearLogs() }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                    }
+
+                    List(engine.consoleLogs) { entry in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(entry.timestamp)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Text(entry.message)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(entry.isError ? .red : .primary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .listStyle(.bordered)
+                    .frame(minHeight: 110)
+                }
+                .padding(.top, 6)
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 680, minHeight: 500)
+    }
+
+    private func openScript() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if let luaType = UTType(filenameExtension: "lua") {
+            panel.allowedContentTypes = [luaType, .plainText]
+        }
+        if panel.runModal() == .OK, let url = panel.url,
+           let contents = try? String(contentsOf: url, encoding: .utf8) {
+            scriptSource = contents
+            scriptName = url.lastPathComponent
+        }
+    }
+
+    private func saveScript() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = scriptName
+        if let luaType = UTType(filenameExtension: "lua") {
+            panel.allowedContentTypes = [luaType, .plainText]
+        }
+        if panel.runModal() == .OK, let url = panel.url {
+            try? scriptSource.write(to: url, atomically: true, encoding: .utf8)
+            scriptName = url.lastPathComponent
+        }
+    }
+}
+
 

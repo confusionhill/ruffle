@@ -8,6 +8,7 @@
 import Cocoa
 import SwiftUI
 import FlashPlayerKit
+import LuaKit
 import UniformTypeIdentifiers
 
 struct TelemetryLogEntry: Identifiable {
@@ -45,12 +46,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private lazy var packetManager = PacketManager(bridge: bridge)
     private lazy var followerManager = FollowerManager(bridge: bridge)
     private lazy var autoReloginManager = AutoReloginManager(bridge: bridge)
+    private let luaEngine = LuaEngine()
+    private lazy var luaSDK = LuaLucentSDK(
+        engine: luaEngine,
+        bridge: bridge,
+        envManager: environmentManager,
+        combatEngine: combatEngine
+    )
 
     private var environmentWindow: NSWindow?
     private var combatWindow: NSWindow?
     private var packetsWindow: NSWindow?
     private var loaderWindow: NSWindow?
     private var travelWindow: NSWindow?
+    private var scriptRunnerWindow: NSWindow?
 
     // Option states (default matching AQW client defaults)
     private var optInfiniteRange = false
@@ -333,6 +342,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         loaderPanelItem.keyEquivalentModifierMask = [.command, .shift]
         let travelPanelItem = NSMenuItem(title: "Travel, Follower & Auto-Relogin…", action: #selector(showTravelWindow), keyEquivalent: "t")
         travelPanelItem.keyEquivalentModifierMask = [.command, .shift]
+        let scriptRunnerItem = NSMenuItem(title: "Script Runner (Lua)…", action: #selector(showScriptRunnerWindow), keyEquivalent: "l")
+        scriptRunnerItem.keyEquivalentModifierMask = [.command, .shift]
         let telemetryPanelItem = NSMenuItem(title: "Telemetry & Call Logs…", action: #selector(showLogsWindow), keyEquivalent: "l")
 
         panelsMenu.items = [
@@ -340,6 +351,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
             packetsPanelItem,
             loaderPanelItem,
             travelPanelItem,
+            scriptRunnerItem,
             NSMenuItem.separator(),
             telemetryPanelItem
         ]
@@ -606,6 +618,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
                 follower: followerManager,
                 relogin: autoReloginManager
             )
+        )
+    }
+
+    @objc private func showScriptRunnerWindow() {
+        presentPanel(
+            title: "Script Runner — Lua 5.4",
+            size: NSSize(width: 720, height: 520),
+            existing: &scriptRunnerWindow,
+            rootView: ScriptRunnerPanelView(engine: luaEngine, sdk: luaSDK)
         )
     }
 
