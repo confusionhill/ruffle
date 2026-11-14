@@ -7,6 +7,7 @@
 
 import Cocoa
 import FlashPlayerKit
+import UniformTypeIdentifiers
 
 struct TelemetryLogEntry: Identifiable {
     let id = UUID()
@@ -22,7 +23,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     @IBOutlet var window: NSWindow!
     private var flashPlayerView: NSFlashPlayerView?
 
-    // Loading overlay
+    // Loading overlay & empty state
+    private var hasLoadedInitialSWF = false
+    private let emptyStateButton = NSButton(title: "Open SWF… (⌘O)", target: nil, action: nil)
     private let loadingOverlay = NSVisualEffectView()
     private let progressIndicator = NSProgressIndicator()
     private let progressLabel = NSTextField(labelWithString: "Loading game files...")
@@ -38,6 +41,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         setupWindowAndPlayer()
         setupMenuBar()
         startMetricsTimer()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.hasLoadedInitialSWF else { return }
+            self.openSWFPanel()
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first else { return }
+        if flashPlayerView != nil {
+            loadSWF(url: url)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.loadSWF(url: url)
+            }
+        }
     }
 
     func applicationWillTerminate(_ aNotification: Notification) {
@@ -53,7 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private func setupWindowAndPlayer() {
         guard let window = self.window else { return }
 
-        window.title = "Ruffle macOS — FlashPlayerKit (Loading...)"
+        window.title = "Ruffle macOS — FlashPlayerKit"
         window.setContentSize(NSSize(width: 1280, height: 720))
         window.center()
 
@@ -65,6 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         self.flashPlayerView = playerView
 
         setupLoadingOverlay(in: contentView)
+        setupEmptyStateButton(in: contentView)
 
         // Wire ActionScript ExternalInterface calls
         playerView.player?.onExternalCall = { [weak self] name, args in
@@ -87,26 +107,72 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
             }
         }
 
-        // Load bundled or local loader.swf
-        if let swfURL = Bundle.main.url(forResource: "loader", withExtension: "swf") {
-            try? playerView.load(fileURL: swfURL)
-        } else {
-            let directURL = URL(fileURLWithPath: #file)
-                .deletingLastPathComponent()
-                .appendingPathComponent("loader.swf")
-            if FileManager.default.fileExists(atPath: directURL.path) {
-                try? playerView.load(fileURL: directURL)
-            }
-        }
-
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(playerView)
+    }
+
+    // MARK: - SWF File Picker & Loading
+
+    @objc private func openSWFPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Select a Flash SWF File"
+        panel.message = "Choose an .swf file to play in Ruffle"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        if let swfType = UTType(filenameExtension: "swf") {
+            panel.allowedContentTypes = [swfType]
+        }
+
+        let handleResult: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self = self, response == .OK, let url = panel.url else { return }
+            self.loadSWF(url: url)
+        }
+
+        if let window = self.window {
+            panel.beginSheetModal(for: window, completionHandler: handleResult)
+        } else if panel.runModal() == .OK, let url = panel.url {
+            loadSWF(url: url)
+        }
+    }
+
+    private func loadSWF(url: URL) {
+        guard let playerView = self.flashPlayerView else { return }
+        hasLoadedInitialSWF = true
+        emptyStateButton.isHidden = true
+        loadingOverlay.isHidden = true
+        loadingOverlay.alphaValue = 1.0
+        progressIndicator.stopAnimation(nil)
+
+        do {
+            try playerView.load(fileURL: url)
+            window?.title = "Ruffle macOS — \(url.lastPathComponent)"
+            appendLog(method: "Load SWF", detail: url.path, isSystem: true)
+            window?.makeFirstResponder(playerView)
+        } catch {
+            appendLog(method: "Load Error", detail: error.localizedDescription, isSystem: true)
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
     }
 
     // MARK: - Menu Bar Setup (Flash, Quality, Tools, Logs)
 
     private func setupMenuBar() {
         guard let mainMenu = NSApplication.shared.mainMenu else { return }
+
+        // 0. File -> Open SWF... (⌘O)
+        let openItem = NSMenuItem(title: "Open SWF…", action: #selector(openSWFPanel), keyEquivalent: "o")
+        if let fileMenu = mainMenu.item(withTitle: "File")?.submenu {
+            fileMenu.insertItem(openItem, at: 0)
+            fileMenu.insertItem(NSMenuItem.separator(), at: 1)
+        } else {
+            let fileMenu = NSMenu(title: "File")
+            fileMenu.addItem(openItem)
+            let fileMenuItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+            fileMenuItem.submenu = fileMenu
+            mainMenu.insertItem(fileMenuItem, at: min(1, mainMenu.items.count))
+        }
 
         // 1. Flash Controls Menu
         let flashMenu = NSMenu(title: "Flash")
@@ -388,9 +454,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         return textField
     }
 
-    // MARK: - Loading Overlay Helper
+    // MARK: - Empty State & Loading Overlay Helpers
+
+    private func setupEmptyStateButton(in container: NSView) {
+        emptyStateButton.bezelStyle = .rounded
+        emptyStateButton.controlSize = .large
+        emptyStateButton.font = .systemFont(ofSize: 14, weight: .semibold)
+        emptyStateButton.target = self
+        emptyStateButton.action = #selector(openSWFPanel)
+        emptyStateButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(emptyStateButton)
+
+        NSLayoutConstraint.activate([
+            emptyStateButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            emptyStateButton.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+        ])
+    }
 
     private func setupLoadingOverlay(in container: NSView) {
+        loadingOverlay.isHidden = true
         loadingOverlay.material = .hudWindow
         loadingOverlay.blendingMode = .withinWindow
         loadingOverlay.state = .active
@@ -427,6 +509,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     }
 
     private func updateProgress(percent: Int) {
+        if loadingOverlay.isHidden {
+            loadingOverlay.isHidden = false
+            loadingOverlay.alphaValue = 1.0
+            progressIndicator.startAnimation(nil)
+        }
         progressLabel.stringValue = "Loading game: \(percent)%"
         window?.title = "Ruffle macOS — FlashPlayerKit (\(percent)%)"
     }
