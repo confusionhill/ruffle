@@ -6,6 +6,7 @@
 //
 
 import Cocoa
+import SwiftUI
 import FlashPlayerKit
 import UniformTypeIdentifiers
 
@@ -36,6 +37,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private var logEntries: [TelemetryLogEntry] = []
     private var logsWindow: NSWindow?
     private var logsTableView: NSTableView?
+
+    // Native Lucent managers & tool windows
+    private let bridge = LucentBridge()
+    private lazy var environmentManager = EnvironmentManager(bridge: bridge)
+    private lazy var combatEngine = CombatEngine(bridge: bridge)
+    private lazy var packetManager = PacketManager(bridge: bridge)
+    private lazy var followerManager = FollowerManager(bridge: bridge)
+    private lazy var autoReloginManager = AutoReloginManager(bridge: bridge)
+
+    private var environmentWindow: NSWindow?
+    private var combatWindow: NSWindow?
+    private var packetsWindow: NSWindow?
+    private var loaderWindow: NSWindow?
+    private var travelWindow: NSWindow?
+
+    // Option states (default matching AQW client defaults)
+    private var optInfiniteRange = false
+    private var optProvokeCell = false
+    private var optEnemyMagnet = false
+    private var optHidePlayers = false
+    private var optSkipCutscenes = false
+    private var optAnimationsEnabled = true
+    private var optCollisionsEnabled = true
+    private var optDeathAdsVisible = true
+    private var optLagKiller = false
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         setupWindowAndPlayer()
@@ -86,23 +112,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         setupLoadingOverlay(in: contentView)
         setupEmptyStateButton(in: contentView)
 
-        // Wire ActionScript ExternalInterface calls
+        // Wire Lucent bridge & ActionScript ExternalInterface calls
+        bridge.player = playerView.player
+        bridge.onPacketFromClient = { [weak self] payload in
+            self?.packetManager.record(direction: .client, payload: payload)
+        }
+        bridge.onPacketFromServer = { [weak self] payload in
+            self?.packetManager.record(direction: .server, payload: payload)
+        }
+        bridge.onConnectionEvent = { [weak self] event in
+            self?.autoReloginManager.handleConnectionEvent(event)
+            self?.appendLog(method: "Connection", detail: event, isSystem: true)
+        }
+
         playerView.player?.onExternalCall = { [weak self] name, args in
             guard let self = self else { return }
 
-            if name == "onProgress" || name == "progress",
-               let pct = args.first as? Int ?? (args.first as? Double).map(Int.init) {
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                self.bridge.handleExternalCall(name: name, args: args)
+
+                if name == "onProgress" || name == "progress",
+                   let pct = args.first as? Int ?? (args.first as? Double).map(Int.init) {
                     self.updateProgress(percent: pct)
-                }
-            } else if name == "onLoaded" || name == "loaded" {
-                DispatchQueue.main.async {
+                } else if name == "onLoaded" || name == "loaded" {
                     self.hideLoadingOverlay()
                 }
-            }
 
-            let argsStr = args.map { "\($0)" }.joined(separator: ", ")
-            DispatchQueue.main.async {
+                let argsStr = args.map { "\($0)" }.joined(separator: ", ")
                 self.appendLog(method: name, detail: argsStr.isEmpty ? "—" : argsStr, isSystem: false)
             }
         }
@@ -146,6 +182,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
         do {
             try playerView.load(fileURL: url)
+            bridge.player = playerView.player
+            bridge.isGameLoaded = false
             window?.title = "Ruffle macOS — \(url.lastPathComponent)"
             appendLog(method: "Load SWF", detail: url.path, isSystem: true)
             window?.makeFirstResponder(playerView)
@@ -207,20 +245,102 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
             freeMemoryItem
         ]
 
-        // 2. Tools Menu (In-game Actions like Bank)
+        // 2. Tools Menu (Bank + Travel Shortcuts)
         let toolsMenu = NSMenu(title: "Game Tools")
         let toolsMenuItem = NSMenuItem(title: "Game Tools", action: nil, keyEquivalent: "")
         toolsMenuItem.submenu = toolsMenu
 
         let openBankItem = NSMenuItem(title: "Open Bank", action: #selector(openBankAction), keyEquivalent: "b")
         let checkBankItem = NSMenuItem(title: "Check If Bank Is Open", action: #selector(checkBankAction), keyEquivalent: "")
+        let reloadMapItem = NSMenuItem(title: "Reload Map", action: #selector(reloadMapAction), keyEquivalent: "r")
+        let setSpawnItem = NSMenuItem(title: "Set Spawn Point", action: #selector(setSpawnPointAction), keyEquivalent: "")
 
         toolsMenu.items = [
             openBankItem,
-            checkBankItem
+            checkBankItem,
+            NSMenuItem.separator(),
+            reloadMapItem,
+            setSpawnItem
         ]
 
-        // 3. Debug & Telemetry Menu
+        // 3. Options Menu (settings.* parity)
+        let optionsMenu = NSMenu(title: "Options")
+        let optionsMenuItem = NSMenuItem(title: "Options", action: nil, keyEquivalent: "")
+        optionsMenuItem.submenu = optionsMenu
+
+        let infiniteRangeItem = NSMenuItem(title: "Infinite Range", action: #selector(toggleInfiniteRange), keyEquivalent: "")
+        let provokeCellItem = NSMenuItem(title: "Provoke Cell", action: #selector(toggleProvokeCell), keyEquivalent: "")
+        let enemyMagnetItem = NSMenuItem(title: "Enemy Magnet", action: #selector(toggleEnemyMagnet), keyEquivalent: "")
+        let hidePlayersItem = NSMenuItem(title: "Hide Other Players", action: #selector(toggleHidePlayers), keyEquivalent: "")
+        let skipCutscenesItem = NSMenuItem(title: "Skip Cutscenes", action: #selector(toggleSkipCutscenes), keyEquivalent: "")
+        let disableAnimItem = NSMenuItem(title: "Disable Animations", action: #selector(toggleDisableAnimations), keyEquivalent: "")
+        let disableCollisionsItem = NSMenuItem(title: "Disable Collisions", action: #selector(toggleDisableCollisions), keyEquivalent: "")
+        let disableDeathAdsItem = NSMenuItem(title: "Disable Death Ads", action: #selector(toggleDisableDeathAds), keyEquivalent: "")
+        let lagKillerItem = NSMenuItem(title: "Lag Killer", action: #selector(toggleLagKiller), keyEquivalent: "")
+
+        let walkSpeedItem = NSMenuItem(title: "Walk Speed…", action: #selector(promptWalkSpeed), keyEquivalent: "")
+        let fpsItem = NSMenuItem(title: "Set FPS…", action: #selector(promptFrameRate), keyEquivalent: "")
+        let customNameItem = NSMenuItem(title: "Custom Name…", action: #selector(promptCustomName), keyEquivalent: "")
+        let customGuildItem = NSMenuItem(title: "Custom Guild…", action: #selector(promptCustomGuild), keyEquivalent: "")
+
+        optionsMenu.items = [
+            infiniteRangeItem,
+            provokeCellItem,
+            enemyMagnetItem,
+            hidePlayersItem,
+            skipCutscenesItem,
+            disableAnimItem,
+            disableCollisionsItem,
+            disableDeathAdsItem,
+            lagKillerItem,
+            NSMenuItem.separator(),
+            walkSpeedItem,
+            fpsItem,
+            NSMenuItem.separator(),
+            customNameItem,
+            customGuildItem
+        ]
+
+        // 4. Combat Menu
+        let combatMenu = NSMenu(title: "Combat")
+        let combatMenuItem = NSMenuItem(title: "Combat", action: nil, keyEquivalent: "")
+        combatMenuItem.submenu = combatMenu
+
+        let toggleAttackItem = NSMenuItem(title: "Toggle Auto-Attack", action: #selector(toggleAutoAttackAction), keyEquivalent: "a")
+        toggleAttackItem.keyEquivalentModifierMask = [.command, .shift]
+        let combatProfilesItem = NSMenuItem(title: "Combat Profiles…", action: #selector(showCombatWindow), keyEquivalent: "")
+
+        combatMenu.items = [
+            toggleAttackItem,
+            NSMenuItem.separator(),
+            combatProfilesItem
+        ]
+
+        // 5. Windows Menu (Native SwiftUI Tool Panels)
+        let panelsMenu = NSMenu(title: "Panels")
+        let panelsMenuItem = NSMenuItem(title: "Panels", action: nil, keyEquivalent: "")
+        panelsMenuItem.submenu = panelsMenu
+
+        let envPanelItem = NSMenuItem(title: "Environment (Drops, Quests, Boosts)…", action: #selector(showEnvironmentWindow), keyEquivalent: "e")
+        envPanelItem.keyEquivalentModifierMask = [.command, .shift]
+        let packetsPanelItem = NSMenuItem(title: "Packets (Logger & Spammer)…", action: #selector(showPacketsWindow), keyEquivalent: "p")
+        packetsPanelItem.keyEquivalentModifierMask = [.command, .shift]
+        let loaderPanelItem = NSMenuItem(title: "Loader / Grabber…", action: #selector(showLoaderWindow), keyEquivalent: "g")
+        loaderPanelItem.keyEquivalentModifierMask = [.command, .shift]
+        let travelPanelItem = NSMenuItem(title: "Travel, Follower & Auto-Relogin…", action: #selector(showTravelWindow), keyEquivalent: "t")
+        travelPanelItem.keyEquivalentModifierMask = [.command, .shift]
+        let telemetryPanelItem = NSMenuItem(title: "Telemetry & Call Logs…", action: #selector(showLogsWindow), keyEquivalent: "l")
+
+        panelsMenu.items = [
+            envPanelItem,
+            packetsPanelItem,
+            loaderPanelItem,
+            travelPanelItem,
+            NSMenuItem.separator(),
+            telemetryPanelItem
+        ]
+
+        // 6. Debug & Telemetry Menu
         let debugMenu = NSMenu(title: "Telemetry")
         let debugMenuItem = NSMenuItem(title: "Telemetry", action: nil, keyEquivalent: "")
         debugMenuItem.submenu = debugMenu
@@ -229,7 +349,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         statusItem.isEnabled = false
         self.statusMenuItem = statusItem
 
-        let viewLogsItem = NSMenuItem(title: "Show Telemetry & Call Logs...", action: #selector(showLogsWindow), keyEquivalent: "l")
+        let viewLogsItem = NSMenuItem(title: "Show Telemetry & Call Logs...", action: #selector(showLogsWindow), keyEquivalent: "")
 
         debugMenu.items = [
             statusItem,
@@ -242,7 +362,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         let insertIndex = windowIndex > 0 ? windowIndex : mainMenu.items.count - 1
         mainMenu.insertItem(flashMenuItem, at: insertIndex)
         mainMenu.insertItem(toolsMenuItem, at: insertIndex + 1)
-        mainMenu.insertItem(debugMenuItem, at: insertIndex + 2)
+        mainMenu.insertItem(optionsMenuItem, at: insertIndex + 2)
+        mainMenu.insertItem(combatMenuItem, at: insertIndex + 3)
+        mainMenu.insertItem(panelsMenuItem, at: insertIndex + 4)
+        mainMenu.insertItem(debugMenuItem, at: insertIndex + 5)
     }
 
     // MARK: - Menu Actions
@@ -294,26 +417,217 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     }
 
     @objc private func openBankAction() {
-        guard let player = flashPlayerView?.player else { return }
-
-        let isOpenResult = player.callExternalInterface(name: "bank.isOpen", arguments: [])
-        let isBankOpen = (isOpenResult as? Bool) ?? false
-
-        if isBankOpen {
+        if bridge.isBankOpen() {
             appendLog(method: "Bank", detail: "bank.isOpen == true; skipping bank.open request", isSystem: true)
             NSSound.beep()
             return
         }
-
         appendLog(method: "Bank", detail: "Calling bank.open via ExternalInterface...", isSystem: true)
-        player.callExternalInterface(name: "bank.open", arguments: [])
+        bridge.openBank()
     }
 
     @objc private func checkBankAction() {
-        guard let player = flashPlayerView?.player else { return }
-        let isOpenResult = player.callExternalInterface(name: "bank.isOpen", arguments: [])
-        let isBankOpen = (isOpenResult as? Bool) ?? false
+        let isBankOpen = bridge.isBankOpen()
         appendLog(method: "Bank", detail: "bank.isOpen result: \(isBankOpen)", isSystem: true)
+    }
+
+    @objc private func reloadMapAction() {
+        bridge.reloadMap()
+        appendLog(method: "Travel", detail: "Reloaded current map", isSystem: true)
+    }
+
+    @objc private func setSpawnPointAction() {
+        bridge.setSpawnPoint()
+        appendLog(method: "Travel", detail: "Set spawn point to current cell/pad", isSystem: true)
+    }
+
+    @objc private func toggleAutoAttackAction() {
+        combatEngine.toggleAutoAttack()
+        appendLog(method: "Combat", detail: combatEngine.isAutoAttacking ? "Auto-Attack Started" : "Auto-Attack Stopped", isSystem: true)
+    }
+
+    // MARK: - Options Actions
+
+    @objc private func toggleInfiniteRange(_ sender: NSMenuItem) {
+        optInfiniteRange.toggle()
+        sender.state = optInfiniteRange ? .on : .off
+        bridge.setInfiniteRange(optInfiniteRange)
+    }
+
+    @objc private func toggleProvokeCell(_ sender: NSMenuItem) {
+        optProvokeCell.toggle()
+        sender.state = optProvokeCell ? .on : .off
+        bridge.setProvokeCell(optProvokeCell)
+    }
+
+    @objc private func toggleEnemyMagnet(_ sender: NSMenuItem) {
+        optEnemyMagnet.toggle()
+        sender.state = optEnemyMagnet ? .on : .off
+        bridge.setEnemyMagnet(optEnemyMagnet)
+    }
+
+    @objc private func toggleHidePlayers(_ sender: NSMenuItem) {
+        optHidePlayers.toggle()
+        sender.state = optHidePlayers ? .on : .off
+        bridge.setOtherPlayersVisible(!optHidePlayers)
+    }
+
+    @objc private func toggleSkipCutscenes(_ sender: NSMenuItem) {
+        optSkipCutscenes.toggle()
+        sender.state = optSkipCutscenes ? .on : .off
+        bridge.setSkipCutscenes(optSkipCutscenes)
+    }
+
+    @objc private func toggleDisableAnimations(_ sender: NSMenuItem) {
+        optAnimationsEnabled.toggle()
+        sender.state = optAnimationsEnabled ? .off : .on
+        bridge.setAnimationsEnabled(optAnimationsEnabled)
+    }
+
+    @objc private func toggleDisableCollisions(_ sender: NSMenuItem) {
+        optCollisionsEnabled.toggle()
+        sender.state = optCollisionsEnabled ? .off : .on
+        bridge.setCollisionsEnabled(optCollisionsEnabled)
+    }
+
+    @objc private func toggleDisableDeathAds(_ sender: NSMenuItem) {
+        optDeathAdsVisible.toggle()
+        sender.state = optDeathAdsVisible ? .off : .on
+        bridge.setDeathAdsVisible(optDeathAdsVisible)
+    }
+
+    @objc private func toggleLagKiller(_ sender: NSMenuItem) {
+        optLagKiller.toggle()
+        sender.state = optLagKiller ? .on : .off
+        bridge.setLagKillerEnabled(optLagKiller)
+    }
+
+    @objc private func promptWalkSpeed() {
+        promptTextInput(title: "Walk Speed", message: "Enter walk speed (default 8):", defaultValue: "8") { [weak self] value in
+            if let speed = Int(value) {
+                self?.bridge.setWalkSpeed(speed)
+            }
+        }
+    }
+
+    @objc private func promptFrameRate() {
+        promptTextInput(title: "Set Frame Rate", message: "Enter target FPS (e.g. 24, 30, 60):", defaultValue: "24") { [weak self] value in
+            if let fps = Int(value) {
+                self?.bridge.setFrameRate(fps)
+            }
+        }
+    }
+
+    @objc private func promptCustomName() {
+        promptTextInput(title: "Custom Name", message: "Enter custom character name (leave empty to reset):", defaultValue: "") { [weak self] value in
+            if value.isEmpty {
+                self?.bridge.resetCustomName()
+            } else {
+                self?.bridge.setCustomName(value)
+            }
+        }
+    }
+
+    @objc private func promptCustomGuild() {
+        promptTextInput(title: "Custom Guild", message: "Enter custom guild name (leave empty to reset):", defaultValue: "") { [weak self] value in
+            if value.isEmpty {
+                self?.bridge.resetCustomGuild()
+            } else {
+                self?.bridge.setCustomGuild(value)
+            }
+        }
+    }
+
+    private func promptTextInput(title: String, message: String, defaultValue: String, onConfirm: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        input.stringValue = defaultValue
+        alert.accessoryView = input
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            onConfirm(input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    // MARK: - Native SwiftUI Tool Windows
+
+    @objc private func showEnvironmentWindow() {
+        presentPanel(
+            title: "Environment — Drops, Quests & Boosts",
+            size: NSSize(width: 500, height: 420),
+            existing: &environmentWindow,
+            rootView: EnvironmentPanelView(manager: environmentManager)
+        )
+    }
+
+    @objc private func showCombatWindow() {
+        presentPanel(
+            title: "Combat Profiles & Auto-Attack",
+            size: NSSize(width: 600, height: 390),
+            existing: &combatWindow,
+            rootView: CombatProfilesPanelView(engine: combatEngine)
+        )
+    }
+
+    @objc private func showPacketsWindow() {
+        presentPanel(
+            title: "Packets — Logger & Spammer",
+            size: NSSize(width: 680, height: 470),
+            existing: &packetsWindow,
+            rootView: PacketsPanelView(manager: packetManager)
+        )
+    }
+
+    @objc private func showLoaderWindow() {
+        presentPanel(
+            title: "Loader / Grabber",
+            size: NSSize(width: 700, height: 500),
+            existing: &loaderWindow,
+            rootView: LoaderGrabberPanelView(bridge: bridge)
+        )
+    }
+
+    @objc private func showTravelWindow() {
+        presentPanel(
+            title: "Travel, Follower & Auto-Relogin",
+            size: NSSize(width: 650, height: 450),
+            existing: &travelWindow,
+            rootView: TravelFollowerReloginPanelView(
+                bridge: bridge,
+                follower: followerManager,
+                relogin: autoReloginManager
+            )
+        )
+    }
+
+    private func presentPanel<Content: View>(
+        title: String,
+        size: NSSize,
+        existing: inout NSWindow?,
+        rootView: Content
+    ) {
+        if let win = existing {
+            win.makeKeyAndOrderFront(nil)
+            return
+        }
+        let hosting = NSHostingController(rootView: rootView)
+        let win = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        win.title = title
+        win.isReleasedWhenClosed = false
+        win.contentViewController = hosting
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        existing = win
     }
 
     // MARK: - Telemetry & Metrics Loop
