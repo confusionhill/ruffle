@@ -155,7 +155,9 @@ final class LucentBridge: ObservableObject {
     // MARK: - Combat
 
     @discardableResult func attackMonster(_ query: String) -> Bool {
-        callBool("combat.attackMonster", args: [query])
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selector: [String: Any] = Int(trimmed).map { ["monsterMapId": $0] } ?? ["name": trimmed.isEmpty ? "*" : trimmed]
+        return callBool("combat.attackMonster", args: [selector])
     }
     func cancelAutoAttack() { call("combat.cancelAutoAttack") }
     func cancelTarget() { call("combat.cancelTarget") }
@@ -164,8 +166,13 @@ final class LucentBridge: ObservableObject {
     func getSkillCooldownRemaining(_ slot: Int) -> Int {
         callInt("combat.getSkillCooldownRemaining", args: [slot])
     }
-    @discardableResult func useSkill(_ slot: Int) -> Bool {
-        callBool("combat.useSkill", args: [slot])
+    @discardableResult func useSkill(_ slot: Int, target: String? = nil, force: Bool = false) -> Bool {
+        if let target = target {
+            let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selector: [String: Any] = Int(trimmed).map { ["monsterMapId": $0] } ?? ["name": trimmed.isEmpty ? "*" : trimmed]
+            return callBool("combat.useSkill", args: [String(slot), selector, force])
+        }
+        return callBool("combat.useSkill", args: [String(slot)])
     }
 
     // MARK: - Drops, Inventory, House, TempInventory
@@ -224,3 +231,4 @@ final class LucentBridge: ObservableObject {
         call("flash.callGameFunction", args: ["sfc.sendXtMessage", "zm", packet])
     }
 }
+

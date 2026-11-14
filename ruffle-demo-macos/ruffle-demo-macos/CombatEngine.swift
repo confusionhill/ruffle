@@ -90,9 +90,11 @@ final class CombatEngine: ObservableObject {
 
         if !bridge.hasTarget() {
             let target = profile.targetQuery.isEmpty ? "*" : profile.targetQuery
-            _ = bridge.attackMonster(target)
-            statusText = "Targeting \(target)..."
-            return
+            if !bridge.attackMonster(target) {
+                statusText = "Waiting for \(target)..."
+                return
+            }
+            statusText = "Targeting \(target)"
         }
 
         if hpPct <= profile.healHpPercent && profile.skills.contains(3) {
@@ -115,3 +117,4 @@ final class CombatEngine: ObservableObject {
         }
     }
 }
+
