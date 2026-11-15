@@ -187,7 +187,7 @@ struct CombatProfilesPanelView: View {
             set: { raw in
                 let parsed = raw.split(separator: ",")
                     .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                    .filter { (1...5).contains($0) }
+                    .filter { (0...5).contains($0) }
                 if !parsed.isEmpty {
                     profile.wrappedValue.skills = parsed
                 }
@@ -197,7 +197,7 @@ struct CombatProfilesPanelView: View {
         return Form {
             Section("Rotation") {
                 TextField("Profile Name", text: profile.name)
-                TextField("Skills (1-5, comma separated)", text: skillsBinding)
+                TextField("Skills (0-5, comma separated)", text: skillsBinding)
                 HStack {
                     TextField("Delay (ms)", value: profile.skillDelayMs, format: .number)
                         .frame(width: 90)
@@ -215,8 +215,8 @@ struct CombatProfilesPanelView: View {
                             .labelsHidden()
 
                         Picker("", selection: $rule.slot) {
-                            ForEach(1...5, id: \.self) { slot in
-                                Text("Skill \(slot)").tag(slot)
+                            ForEach(0...5, id: \.self) { slot in
+                                Text(slot == 0 ? "Auto (0)" : "Skill \(slot)").tag(slot)
                             }
                         }
                         .frame(width: 85)
