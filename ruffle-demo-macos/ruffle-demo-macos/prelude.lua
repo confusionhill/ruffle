@@ -67,3 +67,57 @@ function killForItem(targetQuery, itemName, quantity, skills)
     end
     return true
 end
+
+local function matchesSkillRule(rule)
+    if rule.enabled == false then return false end
+    if type(rule.cond) == "function" then
+        return rule.cond()
+    end
+
+    local when = rule.when or "always"
+    local val = rule.value or 0
+    local hp = player.hp()
+    local maxHp = math.max(1, player.maxHp())
+    local mp = player.mp()
+    local maxMp = math.max(1, player.maxMp())
+    local hpPct = (hp * 100) / maxHp
+    local mpPct = (mp * 100) / maxMp
+
+    if when == "hp<=" then
+        return val == 0 and (hp == 0) or (hpPct <= val)
+    elseif when == "hp>=" then
+        return hpPct >= val
+    elseif when == "mp<=" then
+        return val == 0 and (mp == 0) or (mpPct <= val)
+    elseif when == "mp>=" then
+        return mpPct >= val
+    elseif when == "always" then
+        return true
+    end
+    return false
+end
+
+function castWithRules(skills, rules, skillCursor)
+    local cursor = skillCursor or 1
+    if rules then
+        for _, rule in ipairs(rules) do
+            if matchesSkillRule(rule) and combat.cooldown(rule.slot) == 0 then
+                combat.useSkill(rule.slot)
+                return cursor
+            end
+        end
+    end
+
+    if skills and #skills > 0 then
+        for offset = 0, #skills - 1 do
+            local idx = ((cursor - 1 + offset) % #skills) + 1
+            local slot = skills[idx]
+            if combat.cooldown(slot) == 0 then
+                combat.useSkill(slot)
+                return (idx % #skills) + 1
+            end
+        end
+    end
+
+    return cursor
+end

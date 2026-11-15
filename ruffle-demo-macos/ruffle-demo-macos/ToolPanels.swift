@@ -150,17 +150,12 @@ struct CombatProfilesPanelView: View {
                 Spacer()
 
                 Button("New Profile") {
-                    let created = CombatProfile(
-                        name: "Custom Profile",
-                        skills: [1, 2, 3, 4],
-                        skillDelayMs: 350,
-                        healHpPercent: 40,
-                        targetQuery: "*",
-                        antiCounter: true
-                    )
-                    engine.profiles.append(created)
-                    engine.selectedProfileId = created.id
+                    engine.createProfile()
                 }
+                Button("Delete") {
+                    engine.deleteSelectedProfile()
+                }
+                .disabled(engine.profiles.count <= 1)
             }
 
             Divider()
@@ -200,22 +195,65 @@ struct CombatProfilesPanelView: View {
         )
 
         return Form {
-            TextField("Profile Name", text: profile.name)
-            TextField("Skills (1-5, comma separated)", text: skillsBinding)
-            HStack {
-                TextField("Delay (ms)", value: profile.skillDelayMs, format: .number)
-                    .frame(width: 90)
-                Text("ms")
-                    .foregroundStyle(.secondary)
+            Section("Rotation") {
+                TextField("Profile Name", text: profile.name)
+                TextField("Skills (1-5, comma separated)", text: skillsBinding)
+                HStack {
+                    TextField("Delay (ms)", value: profile.skillDelayMs, format: .number)
+                        .frame(width: 90)
+                    Text("ms")
+                        .foregroundStyle(.secondary)
+                }
+                TextField("Target Query (* for any)", text: profile.targetQuery)
+                Toggle("Pause on Boss Counter-Attack", isOn: profile.antiCounter)
             }
-            HStack {
-                TextField("Heal below HP %", value: profile.healHpPercent, format: .number)
-                    .frame(width: 90)
-                Text("%")
-                    .foregroundStyle(.secondary)
+
+            Section {
+                ForEach(profile.skillRules) { $rule in
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: $rule.enabled)
+                            .labelsHidden()
+
+                        Picker("", selection: $rule.slot) {
+                            ForEach(1...5, id: \.self) { slot in
+                                Text("Skill \(slot)").tag(slot)
+                            }
+                        }
+                        .frame(width: 85)
+
+                        Picker("", selection: $rule.metric) {
+                            ForEach(SkillConditionMetric.allCases) { metric in
+                                Text(metric.rawValue).tag(metric)
+                            }
+                        }
+                        .frame(width: 120)
+
+                        if rule.metric != .always {
+                            TextField("%", value: $rule.threshold, format: .number)
+                                .frame(width: 55)
+                            Text("%")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button(role: .destructive) {
+                            profile.wrappedValue.skillRules.removeAll { $0.id == rule.id }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                Button("+ Add Rule (e.g. MP % ≤ 0)") {
+                    profile.wrappedValue.skillRules.append(
+                        SkillRule(slot: 5, metric: .playerMpBelow, threshold: 0, enabled: true)
+                    )
+                }
+            } header: {
+                Text("Conditional Skill Rules (Priority)")
             }
-            TextField("Target Query (* for any)", text: profile.targetQuery)
-            Toggle("Pause on Boss Counter-Attack", isOn: profile.antiCounter)
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

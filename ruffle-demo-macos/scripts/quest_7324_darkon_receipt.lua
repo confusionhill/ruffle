@@ -3,18 +3,23 @@
 -- Map: arcangrove (private room), Cell: leftBackA, Pad: Right
 -- ============================================================================
 
--- >>> CONFIGURE YOUR CLASS SKILLS HERE <<<
-local SKILLS = { 1, 2, 3, 4 }      -- e.g. { 1, 2, 3, 4 } or { 2, 1, 3, 5 }
+-- >>> CONFIGURE YOUR CLASS SKILLS & CONDITIONAL RULES HERE <<<
+local SKILLS = { 1, 2, 3, 4 }      -- main rotation, e.g. { 1, 2, 3, 4 }
 local SKILL_DELAY_MS = 250          -- delay between skill checks
-local HEAL_SLOT = 3                 -- set to nil if your class has no heal skill
-local HEAL_HP_PERCENT = 45          -- cast HEAL_SLOT when HP% <= this value
+local SKILL_RULES = {
+    -- Evaluated top-to-bottom before SKILLS rotation:
+    -- when = "hp<=" | "hp>=" | "mp<=" | "mp>=" | "always" (value = 0 matches exact 0)
+    -- Or use cond = function() return player.mp() == 0 end
+    { slot = 3, when = "hp<=", value = 45, enabled = true },
+    { slot = 5, when = "mp<=", value = 0,  enabled = false }, -- enable if your class uses a 0-MP / low-MP skill
+}
 
 -- >>> FARM SETTINGS <<<
 local QUEST_ID = 7324
 local MAP_NAME = "arcangrove-99999" -- private room
-local TARGET_CELL = "leftBackA"
+local TARGET_CELL = "leftBack"
 local TARGET_PAD = "Right"
-local TARGET_RECEIPTS = 222         -- set to 0 to farm indefinitely
+local TARGET_RECEIPTS = 22         -- set to 0 to farm indefinitely
 
 -- ============================================================================
 -- Helpers
@@ -75,26 +80,7 @@ local function fightOneCycle(skillCursor)
         end
     end
 
-    local maxHp = math.max(1, player.maxHp())
-    local hpPct = (player.hp() * 100) / maxHp
-
-    if HEAL_SLOT and hpPct <= HEAL_HP_PERCENT and combat.cooldown(HEAL_SLOT) == 0 then
-        combat.useSkill(HEAL_SLOT)
-        return skillCursor
-    end
-
-    if #SKILLS > 0 then
-        for offset = 0, #SKILLS - 1 do
-            local idx = ((skillCursor - 1 + offset) % #SKILLS) + 1
-            local slot = SKILLS[idx]
-            if combat.cooldown(slot) == 0 then
-                combat.useSkill(slot)
-                return (idx % #SKILLS) + 1
-            end
-        end
-    end
-
-    return skillCursor
+    return castWithRules(SKILLS, SKILL_RULES, skillCursor)
 end
 
 -- ============================================================================
@@ -141,3 +127,4 @@ while true do
 end
 
 print("Bot finished.")
+
