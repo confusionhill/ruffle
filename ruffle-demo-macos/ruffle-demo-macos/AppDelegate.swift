@@ -60,6 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private var loaderWindow: NSWindow?
     private var travelWindow: NSWindow?
     private var scriptRunnerWindow: NSWindow?
+    private var backgroundActivityToken: NSObjectProtocol?
 
     // Option states (default matching AQW client defaults)
     private var optInfiniteRange = false
@@ -73,6 +74,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private var optLagKiller = false
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        backgroundActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "Active Flash playback and background automation"
+        )
         setupWindowAndPlayer()
         setupMenuBar()
         startMetricsTimer()
@@ -100,6 +105,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
     func applicationWillTerminate(_ aNotification: Notification) {
         metricsTimer?.invalidate()
+        if let token = backgroundActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            backgroundActivityToken = nil
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -119,6 +128,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
         let playerView = NSFlashPlayerView(frame: contentView.bounds)
         playerView.autoresizingMask = [.width, .height]
+        playerView.pausesWhenInactive = false
         contentView.addSubview(playerView)
         self.flashPlayerView = playerView
 

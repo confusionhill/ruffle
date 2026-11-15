@@ -23,6 +23,10 @@ public final class NSFlashPlayerView: NSView, NSTextInputClient {
         }
     }
 
+    /// When `true` (the default), playback and rendering pause while the macOS application is not active.
+    /// Set to `false` to keep Flash timers, scripts, and rendering running in the background.
+    public var pausesWhenInactive: Bool = true
+
     /// Rolling display render frames per second.
     public private(set) var currentRenderFPS: Double = 0.0
     /// Rolling SWF logical frames per second.
@@ -82,12 +86,18 @@ public final class NSFlashPlayerView: NSView, NSTextInputClient {
         return max(1.0, screenScale * renderScale)
     }
 
-    private var canRender: Bool {
+    private var canTick: Bool {
         window != nil
             && !isHidden
-            && isAppActive
-            && bounds.width > 0
+            && (isAppActive || !pausesWhenInactive)
+    }
+
+    private var canRender: Bool {
+        guard canTick, let window else { return false }
+        return bounds.width > 0
             && bounds.height > 0
+            && !window.isMiniaturized
+            && window.occlusionState.contains(.visible)
     }
 
     private func commonInit() {
@@ -137,7 +147,9 @@ public final class NSFlashPlayerView: NSView, NSTextInputClient {
 
     @objc private func appDidResignActive() {
         isAppActive = false
-        lastTimestamp = nil
+        if pausesWhenInactive {
+            lastTimestamp = nil
+        }
     }
 
     @objc private func appDidBecomeActive() {
@@ -261,7 +273,7 @@ public final class NSFlashPlayerView: NSView, NSTextInputClient {
     }
 
     private func stepFrame() {
-        guard canRender, let player else { return }
+        guard canTick, let player else { return }
         let now = CACurrentMediaTime()
         let dtSeconds: CFTimeInterval
         if let last = lastTimestamp {
@@ -272,7 +284,7 @@ public final class NSFlashPlayerView: NSView, NSTextInputClient {
         lastTimestamp = now
 
         player.tick(dtMillis: dtSeconds * 1000.0)
-        if player.needsRender {
+        if canRender && player.needsRender {
             player.render()
             fpsSampleRenderCount += 1
         }
