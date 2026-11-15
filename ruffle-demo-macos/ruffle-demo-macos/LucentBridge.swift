@@ -177,8 +177,16 @@ final class LucentBridge: ObservableObject {
 
     // MARK: - Drops, Inventory, House, TempInventory
 
-    @discardableResult func acceptDrop(_ query: String) -> Bool { callBool("drops.accept", args: [query]) }
-    @discardableResult func rejectDrop(_ query: String) -> Bool { callBool("drops.reject", args: [query]) }
+    @discardableResult func acceptDrop(itemId: Int) -> Bool { callBool("drops.accept", args: [itemId]) }
+    @discardableResult func rejectDrop(itemId: Int) -> Bool { callBool("drops.reject", args: [itemId]) }
+    @discardableResult func acceptDrop(_ query: String) -> Bool {
+        guard let id = Int(query.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+        return acceptDrop(itemId: id)
+    }
+    @discardableResult func rejectDrop(_ query: String) -> Bool {
+        guard let id = Int(query.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+        return rejectDrop(itemId: id)
+    }
     func getInventoryJSON() -> String { prettyJSON("inventory.getItems") }
     func getHouseJSON() -> String { prettyJSON("house.getItems") }
     func getTempInventoryJSON() -> String { prettyJSON("tempInventory.getItems") }

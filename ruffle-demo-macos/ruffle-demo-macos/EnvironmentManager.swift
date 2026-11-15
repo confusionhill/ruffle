@@ -17,6 +17,7 @@ final class EnvironmentManager: ObservableObject {
     @Published var dropsEnabled = false { didSet { syncTimer() } }
     @Published var rejectUnregisteredDrops = false
     @Published var whitelistItems: [String] = []
+    private(set) var pendingDrops: [Int: String] = [:] // itemId -> itemName
 
     // Quests
     @Published var questsEnabled = false { didSet { syncTimer() } }
@@ -73,13 +74,84 @@ final class EnvironmentManager: ObservableObject {
         }
     }
 
+    func handleExtensionResponse(_ payload: String) {
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cmd = json["cmd"] as? String,
+              cmd == "dropItem",
+              let items = json["items"] as? [String: [String: Any]] else {
+            return
+        }
+
+        for (key, info) in items {
+            let itemId = (info["ItemID"] as? Int)
+                ?? (info["ItemID"] as? String).flatMap(Int.init)
+                ?? Int(key)
+            let name = (info["sName"] as? String) ?? ""
+            guard let id = itemId, !name.isEmpty else { continue }
+            pendingDrops[id] = name
+        }
+
+        if dropsEnabled {
+            processPendingDrops()
+        }
+    }
+
+    func findPendingDropId(matching query: String) -> Int? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = Int(trimmed), pendingDrops[id] != nil {
+            return id
+        }
+        return pendingDrops.first(where: { $0.value.caseInsensitiveCompare(trimmed) == .orderedSame })?.key
+    }
+
+    func acceptDropByNameOrId(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = Int(trimmed) {
+            let ok = bridge.acceptDrop(itemId: id)
+            if ok { pendingDrops.removeValue(forKey: id) }
+            return ok
+        }
+        guard let id = findPendingDropId(matching: trimmed) else { return false }
+        let ok = bridge.acceptDrop(itemId: id)
+        if ok { pendingDrops.removeValue(forKey: id) }
+        return ok
+    }
+
+    func rejectDropByNameOrId(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = Int(trimmed) {
+            let ok = bridge.rejectDrop(itemId: id)
+            if ok { pendingDrops.removeValue(forKey: id) }
+            return ok
+        }
+        guard let id = findPendingDropId(matching: trimmed) else { return false }
+        let ok = bridge.rejectDrop(itemId: id)
+        if ok { pendingDrops.removeValue(forKey: id) }
+        return ok
+    }
+
+    private func processPendingDrops() {
+        guard bridge.isPlayerLoaded() else { return }
+        for (id, name) in pendingDrops {
+            let isWhitelisted = whitelistItems.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+            if isWhitelisted {
+                if bridge.acceptDrop(itemId: id) {
+                    pendingDrops.removeValue(forKey: id)
+                }
+            } else if rejectUnregisteredDrops {
+                if bridge.rejectDrop(itemId: id) {
+                    pendingDrops.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
     private func tick() {
         guard bridge.isPlayerLoaded() else { return }
 
         if dropsEnabled {
-            for item in whitelistItems {
-                _ = bridge.acceptDrop(item)
-            }
+            processPendingDrops()
         }
 
         if questsEnabled {

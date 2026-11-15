@@ -265,12 +265,18 @@ final class LuaLucentSDK {
         }
 
         engine.registerFunction(table: "drops", name: "accept") { [weak self] args in
+            if let id = args.first?.intValue {
+                return .bool(self?.bridge.acceptDrop(itemId: id) ?? false)
+            }
             guard let name = args.first?.stringValue else { return .bool(false) }
-            return .bool(self?.bridge.acceptDrop(name) ?? false)
+            return .bool(self?.envManager.acceptDropByNameOrId(name) ?? false)
         }
         engine.registerFunction(table: "drops", name: "reject") { [weak self] args in
+            if let id = args.first?.intValue {
+                return .bool(self?.bridge.rejectDrop(itemId: id) ?? false)
+            }
             guard let name = args.first?.stringValue else { return .bool(false) }
-            return .bool(self?.bridge.rejectDrop(name) ?? false)
+            return .bool(self?.envManager.rejectDropByNameOrId(name) ?? false)
         }
 
         engine.registerFunction(table: "shops", name: "load") { [weak self] args in
@@ -409,3 +415,4 @@ final class LuaLucentSDK {
         }
     }
 }
+

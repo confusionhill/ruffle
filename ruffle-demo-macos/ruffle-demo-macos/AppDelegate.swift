@@ -147,6 +147,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
             self?.autoReloginManager.handleConnectionEvent(event)
             self?.appendLog(method: "Connection", detail: event, isSystem: true)
         }
+        bridge.onExtensionResponse = { [weak self] payload in
+            self?.environmentManager.handleExtensionResponse(payload)
+        }
 
         playerView.player?.onExternalCall = { [weak self] name, args in
             guard let self = self else { return }
