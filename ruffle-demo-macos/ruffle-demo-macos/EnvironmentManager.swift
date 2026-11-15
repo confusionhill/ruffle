@@ -76,15 +76,20 @@ final class EnvironmentManager: ObservableObject {
 
     func handleExtensionResponse(_ payload: String) {
         guard let data = payload.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let cmd = json["cmd"] as? String,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        let body = (json["dataObj"] as? [String: Any]) ?? json
+        guard let cmd = body["cmd"] as? String,
               cmd == "dropItem",
-              let items = json["items"] as? [String: [String: Any]] else {
+              let items = body["items"] as? [String: [String: Any]] else {
             return
         }
 
         for (key, info) in items {
             let itemId = (info["ItemID"] as? Int)
+                ?? (info["ItemID"] as? NSNumber)?.intValue
                 ?? (info["ItemID"] as? String).flatMap(Int.init)
                 ?? Int(key)
             let name = (info["sName"] as? String) ?? ""
