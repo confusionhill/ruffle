@@ -24,8 +24,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
     @IBOutlet var window: NSWindow!
     private var flashPlayerView: NSFlashPlayerView?
-    
-    private static let swfFile: String = "loader-animation"
 
     // Loading overlay & empty state
     private var hasLoadedInitialSWF = false
@@ -88,7 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self, !self.hasLoadedInitialSWF else { return }
-            if let defaultSWF = Bundle.main.url(forResource: Self.swfFile, withExtension: "swf") {
+            if let defaultSWF = Bundle.main.url(forResource: "loader-animation", withExtension: "swf") {
                 self.loadSWF(url: defaultSWF)
             } else {
                 self.openSWFPanel()
@@ -206,28 +204,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         }
     }
 
-    @objc private func openSWFWithBaseURLPanel() {
-        promptTextInput(
-            title: "Custom SWF Base URL",
-            message: "Enter base URL (e.g. http://localhost:8080/gamefiles/):",
-            defaultValue: "http://localhost:8080/gamefiles/"
-        ) { [weak self] raw in
-            guard let self = self, !raw.isEmpty, let baseURL = URL(string: raw) else { return }
-            let panel = NSOpenPanel()
-            panel.title = "Select a Flash SWF File"
-            panel.allowsMultipleSelection = false
-            panel.canChooseDirectories = false
-            panel.canChooseFiles = true
-            if let swfType = UTType(filenameExtension: "swf") {
-                panel.allowedContentTypes = [swfType]
-            }
-            if panel.runModal() == .OK, let url = panel.url {
-                self.loadSWF(url: url, baseURL: baseURL)
-            }
-        }
-    }
-
-    private func loadSWF(url: URL, baseURL: URL? = nil) {
+    private func loadSWF(url: URL) {
         guard let playerView = self.flashPlayerView else { return }
         hasLoadedInitialSWF = true
         emptyStateButton.isHidden = true
@@ -236,22 +213,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         progressIndicator.stopAnimation(nil)
 
         do {
-            let effectiveBaseURL = baseURL ?? (
-                url.lastPathComponent.caseInsensitiveCompare("loader-ps.swf") == .orderedSame
-                    ? URL(string: "http://localhost:8080/gamefiles/loader-ps.swf")
-                    : nil
-            )
-            if let effectiveBaseURL {
-                let data = try Data(contentsOf: url)
-                try playerView.load(data: data, baseURL: effectiveBaseURL)
-                appendLog(method: "Load SWF", detail: "\(url.path) (baseURL: \(effectiveBaseURL.absoluteString))", isSystem: true)
-            } else {
-                try playerView.load(fileURL: url)
-                appendLog(method: "Load SWF", detail: url.path, isSystem: true)
-            }
+            try playerView.load(fileURL: url)
             bridge.player = playerView.player
             bridge.isGameLoaded = false
             window?.title = "Ruffle macOS — \(url.lastPathComponent)"
+            appendLog(method: "Load SWF", detail: url.path, isSystem: true)
             window?.makeFirstResponder(playerView)
         } catch {
             appendLog(method: "Load Error", detail: error.localizedDescription, isSystem: true)
@@ -267,16 +233,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
 
         // 0. File -> Open SWF... (⌘O)
         let openItem = NSMenuItem(title: "Open SWF…", action: #selector(openSWFPanel), keyEquivalent: "o")
-        let openBaseItem = NSMenuItem(title: "Open SWF with Base URL…", action: #selector(openSWFWithBaseURLPanel), keyEquivalent: "o")
-        openBaseItem.keyEquivalentModifierMask = [.command, .shift]
         if let fileMenu = mainMenu.item(withTitle: "File")?.submenu {
             fileMenu.insertItem(openItem, at: 0)
-            fileMenu.insertItem(openBaseItem, at: 1)
-            fileMenu.insertItem(NSMenuItem.separator(), at: 2)
+            fileMenu.insertItem(NSMenuItem.separator(), at: 1)
         } else {
             let fileMenu = NSMenu(title: "File")
             fileMenu.addItem(openItem)
-            fileMenu.addItem(openBaseItem)
             let fileMenuItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
             fileMenuItem.submenu = fileMenu
             mainMenu.insertItem(fileMenuItem, at: min(1, mainMenu.items.count))
