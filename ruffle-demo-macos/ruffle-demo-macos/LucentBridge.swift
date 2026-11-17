@@ -231,12 +231,25 @@ final class LucentBridge: ObservableObject {
 
     // MARK: - Packets
 
-    @discardableResult func sendClientPacket(_ packet: String, encoding: String = "string") -> Bool {
-        callBool("flash.sendClientPacket", args: [packet, encoding])
+    @discardableResult func sendClientPacket(_ packet: String, encoding: String = "str") -> Bool {
+        let trimmed = packet.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedType: String
+        if encoding == "string" {
+            resolvedType = "str"
+        } else if encoding == "str" && trimmed.hasPrefix("{") {
+            resolvedType = "json"
+        } else if encoding == "str" && trimmed.hasPrefix("<") {
+            resolvedType = "xml"
+        } else {
+            resolvedType = encoding
+        }
+        return callBool("flash.sendClientPacket", args: [trimmed, resolvedType])
     }
 
-    @discardableResult func sendServerPacket(_ packet: String) -> Any? {
-        call("flash.callGameFunction", args: ["sfc.sendXtMessage", "zm", packet])
+    @discardableResult func sendServerPacket(_ packet: String, encoding: String = "string") -> Any? {
+        let trimmed = packet.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fn = (encoding == "json" || trimmed.hasPrefix("{")) ? "sfc.sendJson" : "sfc.sendString"
+        return call("flash.callGameFunction", args: [fn, trimmed])
     }
 }
 
