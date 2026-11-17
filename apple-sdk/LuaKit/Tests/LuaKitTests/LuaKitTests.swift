@@ -97,3 +97,4 @@ final class LuaKitTests: XCTestCase {
         XCTAssertTrue(engine.lastError?.contains("bad.lua") == true)
     }
 }
+

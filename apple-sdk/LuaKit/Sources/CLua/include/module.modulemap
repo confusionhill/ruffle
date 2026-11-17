@@ -2,3 +2,4 @@ module CLua {
     header "shim.h"
     export *
 }
+

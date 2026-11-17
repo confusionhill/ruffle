@@ -178,7 +178,7 @@ struct CombatProfilesPanelView: View {
             }
         }
         .padding(14)
-        .frame(minWidth: 640, minHeight: 380)
+        .frame(minWidth: 560, minHeight: 360)
     }
 
     private func profileEditor(profile: Binding<CombatProfile>) -> some View {
@@ -219,22 +219,18 @@ struct CombatProfilesPanelView: View {
                                 Text(slot == 0 ? "Auto (0)" : "Skill \(slot)").tag(slot)
                             }
                         }
-                        .labelsHidden()
-                        .fixedSize()
+                        .frame(width: 85)
 
                         Picker("", selection: $rule.metric) {
                             ForEach(SkillConditionMetric.allCases) { metric in
                                 Text(metric.rawValue).tag(metric)
                             }
                         }
-                        .labelsHidden()
-                        .fixedSize()
+                        .frame(width: 120)
 
                         if rule.metric != .always {
-                            TextField("", value: $rule.threshold, format: .number)
-                                .labelsHidden()
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 52)
+                            TextField("%", value: $rule.threshold, format: .number)
+                                .frame(width: 55)
                             Text("%")
                                 .foregroundStyle(.secondary)
                         }
