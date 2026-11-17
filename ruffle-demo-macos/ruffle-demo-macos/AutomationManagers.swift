@@ -90,14 +90,19 @@ final class PacketManager: ObservableObject {
 }
 
 struct HttpLogEntry: Identifiable {
-    let id = UUID()
+    let id: UInt64
     let timestamp: String
-    let method: String
-    let url: String
-    let statusCode: Int
-    let bytes: UInt64
-    let durationMs: UInt64
-    let error: String?
+    var method: String
+    var url: String
+    var statusCode: Int
+    var bytes: UInt64
+    var durationMs: UInt64
+    var redirected: Bool = false
+    var reqHeaders: [String: String] = [:]
+    var reqBody: String?
+    var reqMime: String?
+    var resBody: String?
+    var error: String?
 
     var statusDisplay: String {
         if statusCode < 0 { return "…" }
@@ -109,6 +114,21 @@ struct HttpLogEntry: Identifiable {
         if bytes == 0 { return "—" }
         if bytes < 1024 { return "\(bytes) B" }
         return String(format: "%.1f KB", Double(bytes) / 1024.0)
+    }
+
+    var curlCommand: String {
+        var parts = ["curl -X \(method) '\(url)'"]
+        for (k, v) in reqHeaders.sorted(by: { $0.key < $1.key }) {
+            parts.append("-H '\(k): \(v)'")
+        }
+        if let mime = reqMime, !mime.isEmpty {
+            parts.append("-H 'Content-Type: \(mime)'")
+        }
+        if let body = reqBody, !body.isEmpty, !body.hasPrefix("<") {
+            let escaped = body.replacingOccurrences(of: "'", with: "'\\''")
+            parts.append("--data-raw '\(escaped)'")
+        }
+        return parts.joined(separator: " \\\n  ")
     }
 }
 
@@ -127,21 +147,45 @@ final class HttpLoggerManager: ObservableObject {
     @Published var showPending = true
 
     func record(_ event: RuffleHttpLogEvent) {
-        guard !isPaused else { return }
-        if !showPending && event.statusCode < 0 { return }
+        if event.phase == "start" {
+            guard !isPaused else { return }
+            let entry = HttpLogEntry(
+                id: event.id,
+                timestamp: formatter.string(from: Date()),
+                method: event.method ?? "GET",
+                url: event.url ?? "",
+                statusCode: -1,
+                bytes: 0,
+                durationMs: 0,
+                reqHeaders: event.reqHeaders ?? [:],
+                reqBody: event.reqBody,
+                reqMime: event.reqMime
+            )
+            entries.append(entry)
+            if entries.count > 1000 {
+                entries.removeFirst(entries.count - 1000)
+            }
+            return
+        }
 
-        let entry = HttpLogEntry(
-            timestamp: formatter.string(from: Date()),
-            method: event.method,
-            url: event.url,
-            statusCode: event.statusCode,
-            bytes: event.bytes,
-            durationMs: event.durationMs,
-            error: event.error
-        )
-        entries.append(entry)
-        if entries.count > 1000 {
-            entries.removeFirst(entries.count - 1000)
+        guard let idx = entries.firstIndex(where: { $0.id == event.id }) else { return }
+        switch event.phase {
+        case "response":
+            if let url = event.url, !url.isEmpty { entries[idx].url = url }
+            if let status = event.statusCode { entries[idx].statusCode = status }
+            if let bytes = event.bytes, bytes > 0 { entries[idx].bytes = bytes }
+            if let ms = event.durationMs { entries[idx].durationMs = ms }
+            if let redir = event.redirected { entries[idx].redirected = redir }
+        case "body":
+            if let bytes = event.bytes, bytes > 0 { entries[idx].bytes = bytes }
+            if let body = event.resBody { entries[idx].resBody = body }
+        case "error":
+            entries[idx].statusCode = 0
+            if let url = event.url, !url.isEmpty { entries[idx].url = url }
+            if let ms = event.durationMs { entries[idx].durationMs = ms }
+            entries[idx].error = event.error
+        default:
+            break
         }
     }
 

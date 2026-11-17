@@ -54,14 +54,22 @@ public enum RufflePlayerError: Error, LocalizedError {
     }
 }
 
-/// Event emitted when Ruffle starts, completes, or fails an HTTP/asset fetch.
+/// Event emitted when Ruffle starts, completes, reads body, or fails an HTTP/asset fetch.
 public struct RuffleHttpLogEvent: Sendable {
-    public let method: String
-    public let url: String
+    public let id: UInt64
+    /// `"start"`, `"response"`, `"body"`, or `"error"`.
+    public let phase: String
+    public let method: String?
+    public let url: String?
     /// `-1` = started/pending, `0` = network error, `> 0` = HTTP status code.
-    public let statusCode: Int
-    public let bytes: UInt64
-    public let durationMs: UInt64
+    public let statusCode: Int?
+    public let bytes: UInt64?
+    public let durationMs: UInt64?
+    public let redirected: Bool?
+    public let reqHeaders: [String: String]?
+    public let reqBody: String?
+    public let reqMime: String?
+    public let resBody: String?
     public let error: String?
 }
 
@@ -181,18 +189,29 @@ public final class RufflePlayer: ObservableObject {
 
         ruffle_player_set_http_log_handler(
             validHandle,
-            { userData, methodPtr, urlPtr, statusCode, bytes, durationMs, errorPtr in
-                guard let userData else { return }
-                let method = methodPtr.map { String(cString: $0) } ?? "GET"
-                let url = urlPtr.map { String(cString: $0) } ?? ""
-                let errStr = errorPtr.map { String(cString: $0) } ?? ""
+            { userData, jsonPtr in
+                guard let userData, let jsonPtr else { return }
+                let jsonStr = String(cString: jsonPtr)
+                guard let data = jsonStr.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let idNum = obj["id"] as? NSNumber,
+                      let phase = obj["phase"] as? String else {
+                    return
+                }
                 let event = RuffleHttpLogEvent(
-                    method: method,
-                    url: url,
-                    statusCode: Int(statusCode),
-                    bytes: bytes,
-                    durationMs: durationMs,
-                    error: errStr.isEmpty ? nil : errStr
+                    id: idNum.uint64Value,
+                    phase: phase,
+                    method: obj["method"] as? String,
+                    url: obj["url"] as? String,
+                    statusCode: (obj["status"] as? NSNumber)?.intValue,
+                    bytes: (obj["bytes"] as? NSNumber)?.uint64Value,
+                    durationMs: (obj["durationMs"] as? NSNumber)?.uint64Value,
+                    redirected: obj["redirected"] as? Bool,
+                    reqHeaders: obj["reqHeaders"] as? [String: String],
+                    reqBody: obj["reqBody"] as? String,
+                    reqMime: obj["reqMime"] as? String,
+                    resBody: obj["resBody"] as? String,
+                    error: obj["error"] as? String
                 )
                 let player = Unmanaged<RufflePlayer>.fromOpaque(userData).takeUnretainedValue()
                 if Thread.isMainThread {

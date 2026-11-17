@@ -668,14 +668,17 @@ struct ScriptRunnerPanelView: View {
     }
 }
 
-// MARK: - 7. HTTP Logger Panel
+// MARK: - 7. HTTP Debugger Panel
 
 struct HttpLoggerPanelView: View {
     @ObservedObject var manager: HttpLoggerManager
+    @State private var selectedEntryId: UInt64?
+    @State private var inspectorTab = 0
 
     private var filteredEntries: [HttpLogEntry] {
         let q = manager.filterText.trimmingCharacters(in: .whitespacesAndNewlines)
         return manager.entries.filter { entry in
+            if !manager.showPending && entry.statusCode < 0 { return false }
             if manager.errorsOnly && entry.statusCode != 0 && entry.statusCode < 400 {
                 return false
             }
@@ -685,6 +688,11 @@ struct HttpLoggerPanelView: View {
                 || entry.statusDisplay.localizedCaseInsensitiveContains(q)
                 || (entry.error?.localizedCaseInsensitiveContains(q) ?? false)
         }
+    }
+
+    private var selectedEntry: HttpLogEntry? {
+        guard let id = selectedEntryId else { return nil }
+        return manager.entries.first(where: { $0.id == id })
     }
 
     var body: some View {
@@ -701,60 +709,164 @@ struct HttpLoggerPanelView: View {
                 }
                 Button("Clear") {
                     manager.clear()
+                    selectedEntryId = nil
                 }
             }
 
-            List(filteredEntries) { entry in
-                HStack(alignment: .top, spacing: 8) {
-                    Text(entry.timestamp)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 82, alignment: .leading)
+            HSplitView {
+                List(filteredEntries, selection: $selectedEntryId) { entry in
+                    HStack(spacing: 8) {
+                        Text(entry.timestamp)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 82, alignment: .leading)
 
-                    Text(entry.method)
-                        .font(.system(.caption, design: .monospaced))
-                        .fontWeight(.semibold)
-                        .frame(width: 38, alignment: .leading)
+                        Text(entry.method)
+                            .font(.system(.caption, design: .monospaced))
+                            .fontWeight(.semibold)
+                            .frame(width: 36, alignment: .leading)
 
-                    Text(entry.statusDisplay)
-                        .font(.system(.caption, design: .monospaced))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(statusColor(entry.statusCode))
-                        .frame(width: 34, alignment: .trailing)
+                        Text(entry.statusDisplay)
+                            .font(.system(.caption, design: .monospaced))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(statusColor(entry.statusCode))
+                            .frame(width: 34, alignment: .trailing)
 
-                    Text(entry.statusCode < 0 ? "—" : "\(entry.durationMs) ms")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 60, alignment: .trailing)
+                        Text(entry.statusCode < 0 ? "—" : "\(entry.durationMs) ms")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 56, alignment: .trailing)
 
-                    Text(entry.sizeDisplay)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 62, alignment: .trailing)
+                        Text(entry.sizeDisplay)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 60, alignment: .trailing)
 
-                    VStack(alignment: .leading, spacing: 2) {
                         Text(entry.url)
                             .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .lineLimit(2)
-                        if let err = entry.error {
-                            Text(err)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.red)
-                        }
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .tag(entry.id)
+                    .contextMenu {
+                        Button("Copy URL") { copyToPasteboard(entry.url) }
+                        Button("Copy cURL") { copyToPasteboard(entry.curlCommand) }
                     }
                 }
-                .contextMenu {
-                    Button("Copy URL") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(entry.url, forType: .string)
-                    }
+                .listStyle(.bordered)
+                .frame(minWidth: 420)
+
+                if let entry = selectedEntry {
+                    inspectorView(for: entry)
+                        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Text("Select a request to inspect headers, request body, and response body.")
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .listStyle(.bordered)
         }
         .padding(14)
-        .frame(minWidth: 760, minHeight: 460)
+        .frame(minWidth: 860, minHeight: 500)
+    }
+
+    private func inspectorView(for entry: HttpLogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("", selection: $inspectorTab) {
+                    Text("Overview").tag(0)
+                    Text("Headers (\(entry.reqHeaders.count))").tag(1)
+                    Text("Request").tag(2)
+                    Text("Response").tag(3)
+                }
+                .pickerStyle(.segmented)
+
+                Spacer()
+
+                Button("Copy cURL") {
+                    copyToPasteboard(entry.curlCommand)
+                }
+                .font(.caption)
+            }
+
+            Divider()
+
+            switch inspectorTab {
+            case 0:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        detailRow("URL", entry.url)
+                        detailRow("Method", entry.method)
+                        detailRow("Status", entry.statusDisplay)
+                        detailRow("Duration", entry.statusCode < 0 ? "Pending" : "\(entry.durationMs) ms")
+                        detailRow("Size", entry.sizeDisplay)
+                        detailRow("Redirected", entry.redirected ? "Yes" : "No")
+                        if let mime = entry.reqMime {
+                            detailRow("Content-Type", mime)
+                        }
+                        if let err = entry.error {
+                            detailRow("Error", err)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            case 1:
+                if entry.reqHeaders.isEmpty && entry.reqMime == nil {
+                    Text("No custom request headers.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let mime = entry.reqMime {
+                                detailRow("Content-Type", mime)
+                            }
+                            ForEach(entry.reqHeaders.keys.sorted(), id: \.self) { key in
+                                detailRow(key, entry.reqHeaders[key] ?? "")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            case 2:
+                bodyViewer(text: entry.reqBody ?? "<no request body>", emptyHint: "<no request body>")
+            default:
+                bodyViewer(text: entry.resBody ?? (entry.statusCode < 0 ? "Waiting for response…" : "<response body not read or empty>"), emptyHint: "")
+            }
+        }
+        .padding(8)
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label + ":")
+                .font(.system(.caption, design: .monospaced))
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 96, alignment: .leading)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+        }
+    }
+
+    private func bodyViewer(text: String, emptyHint: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Spacer()
+                Button("Copy Body") { copyToPasteboard(text) }
+                    .font(.caption)
+                    .disabled(text.isEmpty || text == emptyHint)
+            }
+            TextEditor(text: .constant(text))
+                .font(.system(.caption, design: .monospaced))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     private func statusColor(_ code: Int) -> Color {

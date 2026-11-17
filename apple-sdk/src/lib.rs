@@ -74,17 +74,8 @@ pub type RuffleVirtualKeyboardCallback =
 pub type RuffleNavigateUrlCallback =
     Option<unsafe extern "C" fn(user_data: *mut c_void, url_utf8: *const c_char)>;
 
-pub type RuffleHttpLogCallback = Option<
-    unsafe extern "C" fn(
-        user_data: *mut c_void,
-        method_utf8: *const c_char,
-        url_utf8: *const c_char,
-        status_code: i32,
-        bytes: u64,
-        duration_ms: u64,
-        error_utf8: *const c_char,
-    ),
->;
+pub type RuffleHttpLogCallback =
+    Option<unsafe extern "C" fn(user_data: *mut c_void, event_json_utf8: *const c_char)>;
 
 #[derive(Clone, Copy)]
 struct ExternalCallbackRegistration {
@@ -122,34 +113,101 @@ struct HttpLogCallbackRegistration {
 unsafe impl Send for HttpLogCallbackRegistration {}
 unsafe impl Sync for HttpLogCallbackRegistration {}
 
-fn emit_http_log(
+static NEXT_HTTP_REQUEST_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+fn emit_http_event(
     reg: &Arc<Mutex<HttpLogCallbackRegistration>>,
-    method: &str,
-    url: &str,
-    status_code: i32,
-    bytes: u64,
-    duration_ms: u64,
-    error: &str,
+    payload: serde_json::Value,
 ) {
     if let Ok(guard) = reg.lock()
         && let Some(cb) = guard.callback
-        && let (Ok(c_method), Ok(c_url), Ok(c_err)) = (
-            CString::new(method),
-            CString::new(url),
-            CString::new(error),
-        )
+        && let Ok(json_str) = serde_json::to_string(&payload)
+        && let Ok(c_json) = CString::new(json_str)
     {
         unsafe {
-            cb(
-                guard.user_data,
-                c_method.as_ptr(),
-                c_url.as_ptr(),
-                status_code,
-                bytes,
-                duration_ms,
-                c_err.as_ptr(),
-            );
+            cb(guard.user_data, c_json.as_ptr());
         }
+    }
+}
+
+fn format_body_preview(bytes: &[u8]) -> String {
+    const MAX_PREVIEW_BYTES: usize = 128 * 1024;
+    if bytes.is_empty() {
+        return String::new();
+    }
+    if bytes.starts_with(b"FWS") || bytes.starts_with(b"CWS") || bytes.starts_with(b"ZWS") {
+        let sig = std::str::from_utf8(&bytes[..3]).unwrap_or("SWF");
+        return format!("<SWF binary ({sig}), {} bytes>", bytes.len());
+    }
+    let slice = &bytes[..bytes.len().min(MAX_PREVIEW_BYTES)];
+    match std::str::from_utf8(slice) {
+        Ok(text) => {
+            if bytes.len() > MAX_PREVIEW_BYTES {
+                format!("{text}\n\n... [truncated, {} total bytes]", bytes.len())
+            } else {
+                text.to_string()
+            }
+        }
+        Err(_) => format!("<binary data, {} bytes>", bytes.len()),
+    }
+}
+
+struct LoggingSuccessResponse {
+    inner: Box<dyn ruffle_core::backend::navigator::SuccessResponse>,
+    request_id: u64,
+    http_log_reg: Arc<Mutex<HttpLogCallbackRegistration>>,
+}
+
+impl ruffle_core::backend::navigator::SuccessResponse for LoggingSuccessResponse {
+    fn url(&self) -> std::borrow::Cow<'_, str> {
+        self.inner.url()
+    }
+
+    fn set_url(&mut self, url: String) {
+        self.inner.set_url(url);
+    }
+
+    fn body(self: Box<Self>) -> OwnedFuture<Vec<u8>, ruffle_core::loader::Error> {
+        let request_id = self.request_id;
+        let http_log_reg = self.http_log_reg;
+        let fut = self.inner.body();
+        Box::pin(async move {
+            let res = fut.await;
+            if let Ok(ref data) = res {
+                let preview = format_body_preview(data);
+                emit_http_event(
+                    &http_log_reg,
+                    serde_json::json!({
+                        "id": request_id,
+                        "phase": "body",
+                        "bytes": data.len() as u64,
+                        "resBody": preview,
+                    }),
+                );
+            }
+            res
+        })
+    }
+
+    fn text_encoding(&self) -> Option<&'static encoding_rs::Encoding> {
+        self.inner.text_encoding()
+    }
+
+    fn status(&self) -> u16 {
+        self.inner.status()
+    }
+
+    fn redirected(&self) -> bool {
+        self.inner.redirected()
+    }
+
+    fn next_chunk(&mut self) -> OwnedFuture<Option<Vec<u8>>, ruffle_core::loader::Error> {
+        self.inner.next_chunk()
+    }
+
+    fn expected_length(&self) -> Result<Option<u64>, ruffle_core::loader::Error> {
+        self.inner.expected_length()
     }
 }
 
@@ -377,50 +435,87 @@ impl NavigatorBackend for DynamicNavigatorBackend {
     }
 
     fn fetch(&self, request: Request) -> OwnedFuture<Box<dyn SuccessResponse>, ErrorResponse> {
+        let request_id =
+            NEXT_HTTP_REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let method = match request.method() {
             NavigationMethod::Get => "GET",
             NavigationMethod::Post => "POST",
         };
         let req_url = request.url().to_string();
-        let http_log_reg = self.http_log_reg.clone();
+        let req_headers: std::collections::HashMap<String, String> = request
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let (req_body, req_mime) = match request.body() {
+            Some((bytes, mime)) => (Some(format_body_preview(bytes)), Some(mime.clone())),
+            None => (None, None),
+        };
 
-        emit_http_log(&http_log_reg, method, &req_url, -1, 0, 0, "");
+        let http_log_reg = self.http_log_reg.clone();
+        emit_http_event(
+            &http_log_reg,
+            serde_json::json!({
+                "id": request_id,
+                "phase": "start",
+                "method": method,
+                "url": req_url,
+                "reqHeaders": req_headers,
+                "reqBody": req_body,
+                "reqMime": req_mime,
+            }),
+        );
 
         let started = std::time::Instant::now();
         let fut = self.inner.borrow().fetch(request);
         Box::pin(async move {
             let res = fut.await;
             let duration_ms = started.elapsed().as_millis() as u64;
-            match &res {
+            match res {
                 Ok(ok_res) => {
                     let status = ok_res.status() as i32;
                     let bytes = ok_res.expected_length().ok().flatten().unwrap_or(0);
-                    let final_url = ok_res.url();
-                    emit_http_log(
+                    let final_url = ok_res.url().into_owned();
+                    let redirected = ok_res.redirected();
+                    emit_http_event(
                         &http_log_reg,
-                        method,
-                        final_url.as_ref(),
-                        status,
-                        bytes,
-                        duration_ms,
-                        "",
+                        serde_json::json!({
+                            "id": request_id,
+                            "phase": "response",
+                            "url": final_url,
+                            "status": status,
+                            "bytes": bytes,
+                            "durationMs": duration_ms,
+                            "redirected": redirected,
+                        }),
                     );
+                    let wrapped: Box<dyn SuccessResponse> = Box::new(LoggingSuccessResponse {
+                        inner: ok_res,
+                        request_id,
+                        http_log_reg,
+                    });
+                    Ok(wrapped)
                 }
                 Err(err) => {
                     let err_msg = format!("{}", err.error);
-                    let final_url = if err.url.is_empty() { &req_url } else { &err.url };
-                    emit_http_log(
+                    let final_url = if err.url.is_empty() {
+                        req_url
+                    } else {
+                        err.url.clone()
+                    };
+                    emit_http_event(
                         &http_log_reg,
-                        method,
-                        final_url,
-                        0,
-                        0,
-                        duration_ms,
-                        &err_msg,
+                        serde_json::json!({
+                            "id": request_id,
+                            "phase": "error",
+                            "url": final_url,
+                            "durationMs": duration_ms,
+                            "error": err_msg,
+                        }),
                     );
+                    Err(err)
                 }
             }
-            res
         })
     }
 
