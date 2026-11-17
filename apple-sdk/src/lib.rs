@@ -528,6 +528,11 @@ impl NavigatorBackend for DynamicNavigatorBackend {
     }
 
     fn pre_process_url(&self, url: Url) -> Url {
+        if url.scheme() == "http"
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"))
+        {
+            return url;
+        }
         self.inner.borrow().pre_process_url(url)
     }
 
