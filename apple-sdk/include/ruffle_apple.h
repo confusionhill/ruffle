@@ -199,6 +199,25 @@ void ruffle_player_set_interpolating(RufflePlayerHandle* handle, bool interpolat
 /// Runs garbage collection and releases unused bitmap caches and pooled GPU buffers.
 void ruffle_player_release_memory(RufflePlayerHandle* handle);
 
+/// Callback invoked when Ruffle starts, completes, or fails an HTTP/asset fetch.
+/// `status_code`: `-1` = started/pending, `0` = network error, `>0` = HTTP status code.
+typedef void (*RuffleHttpLogCallback)(
+    void* user_data,
+    const char* method_utf8,
+    const char* url_utf8,
+    int32_t status_code,
+    uint64_t bytes,
+    uint64_t duration_ms,
+    const char* error_utf8
+);
+
+/// Registers a callback for Ruffle HTTP/asset fetch logging.
+void ruffle_player_set_http_log_handler(
+    RufflePlayerHandle* handle,
+    RuffleHttpLogCallback callback,
+    void* user_data
+);
+
 /// Flushes shared objects and destroys the `RufflePlayerHandle`.
 void ruffle_player_destroy(RufflePlayerHandle* handle);
 

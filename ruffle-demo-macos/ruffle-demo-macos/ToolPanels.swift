@@ -668,4 +668,102 @@ struct ScriptRunnerPanelView: View {
     }
 }
 
+// MARK: - 7. HTTP Logger Panel
+
+struct HttpLoggerPanelView: View {
+    @ObservedObject var manager: HttpLoggerManager
+
+    private var filteredEntries: [HttpLogEntry] {
+        let q = manager.filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return manager.entries.filter { entry in
+            if manager.errorsOnly && entry.statusCode != 0 && entry.statusCode < 400 {
+                return false
+            }
+            if q.isEmpty { return true }
+            return entry.url.localizedCaseInsensitiveContains(q)
+                || entry.method.localizedCaseInsensitiveContains(q)
+                || entry.statusDisplay.localizedCaseInsensitiveContains(q)
+                || (entry.error?.localizedCaseInsensitiveContains(q) ?? false)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                TextField("Filter URL, method, or status…", text: $manager.filterText)
+                    .textFieldStyle(.roundedBorder)
+
+                Toggle("Errors Only", isOn: $manager.errorsOnly)
+                Toggle("Show Pending", isOn: $manager.showPending)
+
+                Button(manager.isPaused ? "Resume" : "Pause") {
+                    manager.isPaused.toggle()
+                }
+                Button("Clear") {
+                    manager.clear()
+                }
+            }
+
+            List(filteredEntries) { entry in
+                HStack(alignment: .top, spacing: 8) {
+                    Text(entry.timestamp)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 82, alignment: .leading)
+
+                    Text(entry.method)
+                        .font(.system(.caption, design: .monospaced))
+                        .fontWeight(.semibold)
+                        .frame(width: 38, alignment: .leading)
+
+                    Text(entry.statusDisplay)
+                        .font(.system(.caption, design: .monospaced))
+                        .fontWeight(.semibold)
+                        .foregroundStyle(statusColor(entry.statusCode))
+                        .frame(width: 34, alignment: .trailing)
+
+                    Text(entry.statusCode < 0 ? "—" : "\(entry.durationMs) ms")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 60, alignment: .trailing)
+
+                    Text(entry.sizeDisplay)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 62, alignment: .trailing)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.url)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                        if let err = entry.error {
+                            Text(err)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+                .contextMenu {
+                    Button("Copy URL") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(entry.url, forType: .string)
+                    }
+                }
+            }
+            .listStyle(.bordered)
+        }
+        .padding(14)
+        .frame(minWidth: 760, minHeight: 460)
+    }
+
+    private func statusColor(_ code: Int) -> Color {
+        if code < 0 { return .blue }
+        if code == 0 || code >= 400 { return .red }
+        if code >= 300 { return .orange }
+        return .green
+    }
+}
+
+
 

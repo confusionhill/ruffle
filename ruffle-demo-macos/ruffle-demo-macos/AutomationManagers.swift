@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import FlashPlayerKit
 
 enum PacketDirection: String {
     case client = "C → S"
@@ -85,6 +86,67 @@ final class PacketManager: ObservableObject {
         spamTimer?.invalidate()
         spamTimer = nil
         isSpamming = false
+    }
+}
+
+struct HttpLogEntry: Identifiable {
+    let id = UUID()
+    let timestamp: String
+    let method: String
+    let url: String
+    let statusCode: Int
+    let bytes: UInt64
+    let durationMs: UInt64
+    let error: String?
+
+    var statusDisplay: String {
+        if statusCode < 0 { return "…" }
+        if statusCode == 0 { return "ERR" }
+        return "\(statusCode)"
+    }
+
+    var sizeDisplay: String {
+        if bytes == 0 { return "—" }
+        if bytes < 1024 { return "\(bytes) B" }
+        return String(format: "%.1f KB", Double(bytes) / 1024.0)
+    }
+}
+
+@MainActor
+final class HttpLoggerManager: ObservableObject {
+    private lazy var formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    @Published var entries: [HttpLogEntry] = []
+    @Published var isPaused = false
+    @Published var filterText = ""
+    @Published var errorsOnly = false
+    @Published var showPending = true
+
+    func record(_ event: RuffleHttpLogEvent) {
+        guard !isPaused else { return }
+        if !showPending && event.statusCode < 0 { return }
+
+        let entry = HttpLogEntry(
+            timestamp: formatter.string(from: Date()),
+            method: event.method,
+            url: event.url,
+            statusCode: event.statusCode,
+            bytes: event.bytes,
+            durationMs: event.durationMs,
+            error: event.error
+        )
+        entries.append(entry)
+        if entries.count > 1000 {
+            entries.removeFirst(entries.count - 1000)
+        }
+    }
+
+    func clear() {
+        entries.removeAll()
     }
 }
 

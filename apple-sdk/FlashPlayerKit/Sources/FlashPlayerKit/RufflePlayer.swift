@@ -54,6 +54,17 @@ public enum RufflePlayerError: Error, LocalizedError {
     }
 }
 
+/// Event emitted when Ruffle starts, completes, or fails an HTTP/asset fetch.
+public struct RuffleHttpLogEvent: Sendable {
+    public let method: String
+    public let url: String
+    /// `-1` = started/pending, `0` = network error, `> 0` = HTTP status code.
+    public let statusCode: Int
+    public let bytes: UInt64
+    public let durationMs: UInt64
+    public let error: String?
+}
+
 /// Manages a native Ruffle Flash player instance backed by Apple Metal (`CAMetalLayer`) and CoreAudio.
 @MainActor
 public final class RufflePlayer: ObservableObject {
@@ -68,6 +79,9 @@ public final class RufflePlayer: ObservableObject {
 
     /// Invoked when the SWF calls `navigateToURL(...)` for an external website URL.
     public var onNavigateURL: ((_ url: URL) -> Void)?
+
+    /// Invoked when Ruffle starts, completes, or fails an HTTP/asset fetch.
+    public var onHttpLog: ((_ event: RuffleHttpLogEvent) -> Void)?
 
     @Published public private(set) var movieSize: CGSize = .zero
 
@@ -159,6 +173,35 @@ public final class RufflePlayer: ObservableObject {
                 } else {
                     DispatchQueue.main.async {
                         player.onNavigateURL?(url)
+                    }
+                }
+            },
+            selfPtr
+        )
+
+        ruffle_player_set_http_log_handler(
+            validHandle,
+            { userData, methodPtr, urlPtr, statusCode, bytes, durationMs, errorPtr in
+                guard let userData else { return }
+                let method = methodPtr.map { String(cString: $0) } ?? "GET"
+                let url = urlPtr.map { String(cString: $0) } ?? ""
+                let errStr = errorPtr.map { String(cString: $0) } ?? ""
+                let event = RuffleHttpLogEvent(
+                    method: method,
+                    url: url,
+                    statusCode: Int(statusCode),
+                    bytes: bytes,
+                    durationMs: durationMs,
+                    error: errStr.isEmpty ? nil : errStr
+                )
+                let player = Unmanaged<RufflePlayer>.fromOpaque(userData).takeUnretainedValue()
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        player.onHttpLog?(event)
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        player.onHttpLog?(event)
                     }
                 }
             },

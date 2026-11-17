@@ -46,6 +46,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private lazy var packetManager = PacketManager(bridge: bridge)
     private lazy var followerManager = FollowerManager(bridge: bridge)
     private lazy var autoReloginManager = AutoReloginManager(bridge: bridge)
+    private let httpLoggerManager = HttpLoggerManager()
     private let luaEngine = LuaEngine()
     private lazy var luaSDK = LuaLucentSDK(
         engine: luaEngine,
@@ -60,6 +61,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
     private var loaderWindow: NSWindow?
     private var travelWindow: NSWindow?
     private var scriptRunnerWindow: NSWindow?
+    private var httpLoggerWindow: NSWindow?
     private var backgroundActivityToken: NSObjectProtocol?
 
     // Option states (default matching AQW client defaults)
@@ -149,6 +151,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         }
         bridge.onExtensionResponse = { [weak self] payload in
             self?.environmentManager.handleExtensionResponse(payload)
+        }
+
+        playerView.player?.onHttpLog = { [weak self] event in
+            self?.httpLoggerManager.record(event)
         }
 
         playerView.player?.onExternalCall = { [weak self] name, args in
@@ -357,6 +363,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
         travelPanelItem.keyEquivalentModifierMask = [.command, .shift]
         let scriptRunnerItem = NSMenuItem(title: "Script Runner (Lua)…", action: #selector(showScriptRunnerWindow), keyEquivalent: "l")
         scriptRunnerItem.keyEquivalentModifierMask = [.command, .shift]
+        let httpLoggerItem = NSMenuItem(title: "HTTP Logger…", action: #selector(showHttpLoggerWindow), keyEquivalent: "h")
+        httpLoggerItem.keyEquivalentModifierMask = [.command, .shift]
         let telemetryPanelItem = NSMenuItem(title: "Telemetry & Call Logs…", action: #selector(showLogsWindow), keyEquivalent: "l")
 
         panelsMenu.items = [
@@ -365,6 +373,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
             loaderPanelItem,
             travelPanelItem,
             scriptRunnerItem,
+            httpLoggerItem,
             NSMenuItem.separator(),
             telemetryPanelItem
         ]
@@ -640,6 +649,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTab
             size: NSSize(width: 720, height: 520),
             existing: &scriptRunnerWindow,
             rootView: ScriptRunnerPanelView(engine: luaEngine, sdk: luaSDK)
+        )
+    }
+
+    @objc private func showHttpLoggerWindow() {
+        presentPanel(
+            title: "HTTP Logger — Ruffle Network Requests",
+            size: NSSize(width: 820, height: 500),
+            existing: &httpLoggerWindow,
+            rootView: HttpLoggerPanelView(manager: httpLoggerManager)
         )
     }
 

@@ -74,6 +74,18 @@ pub type RuffleVirtualKeyboardCallback =
 pub type RuffleNavigateUrlCallback =
     Option<unsafe extern "C" fn(user_data: *mut c_void, url_utf8: *const c_char)>;
 
+pub type RuffleHttpLogCallback = Option<
+    unsafe extern "C" fn(
+        user_data: *mut c_void,
+        method_utf8: *const c_char,
+        url_utf8: *const c_char,
+        status_code: i32,
+        bytes: u64,
+        duration_ms: u64,
+        error_utf8: *const c_char,
+    ),
+>;
+
 #[derive(Clone, Copy)]
 struct ExternalCallbackRegistration {
     callback: RuffleExternalCallCallback,
@@ -100,6 +112,46 @@ struct NavigateUrlCallbackRegistration {
 
 unsafe impl Send for NavigateUrlCallbackRegistration {}
 unsafe impl Sync for NavigateUrlCallbackRegistration {}
+
+#[derive(Clone, Copy)]
+struct HttpLogCallbackRegistration {
+    callback: RuffleHttpLogCallback,
+    user_data: *mut c_void,
+}
+
+unsafe impl Send for HttpLogCallbackRegistration {}
+unsafe impl Sync for HttpLogCallbackRegistration {}
+
+fn emit_http_log(
+    reg: &Arc<Mutex<HttpLogCallbackRegistration>>,
+    method: &str,
+    url: &str,
+    status_code: i32,
+    bytes: u64,
+    duration_ms: u64,
+    error: &str,
+) {
+    if let Ok(guard) = reg.lock()
+        && let Some(cb) = guard.callback
+        && let (Ok(c_method), Ok(c_url), Ok(c_err)) = (
+            CString::new(method),
+            CString::new(url),
+            CString::new(error),
+        )
+    {
+        unsafe {
+            cb(
+                guard.user_data,
+                c_method.as_ptr(),
+                c_url.as_ptr(),
+                status_code,
+                bytes,
+                duration_ms,
+                c_err.as_ptr(),
+            );
+        }
+    }
+}
 
 struct AppleUiBackend {
     keyboard_reg: Arc<Mutex<VirtualKeyboardCallbackRegistration>>,
@@ -261,6 +313,7 @@ type InnerNavigator = ExternalNavigatorBackend<AppleFutureSpawner, AppleNavigato
 struct DynamicNavigatorBackend {
     inner: Rc<RefCell<InnerNavigator>>,
     navigate_reg: Arc<Mutex<NavigateUrlCallbackRegistration>>,
+    http_log_reg: Arc<Mutex<HttpLogCallbackRegistration>>,
 }
 
 impl DynamicNavigatorBackend {
@@ -269,6 +322,7 @@ impl DynamicNavigatorBackend {
         content: PlayingContent,
         spawner: AppleFutureSpawner,
         navigate_reg: Arc<Mutex<NavigateUrlCallbackRegistration>>,
+        http_log_reg: Arc<Mutex<HttpLogCallbackRegistration>>,
     ) -> Self {
         let nav = ExternalNavigatorBackend::new(
             base_url,
@@ -287,6 +341,7 @@ impl DynamicNavigatorBackend {
         Self {
             inner: Rc::new(RefCell::new(nav)),
             navigate_reg,
+            http_log_reg,
         }
     }
 
@@ -322,7 +377,51 @@ impl NavigatorBackend for DynamicNavigatorBackend {
     }
 
     fn fetch(&self, request: Request) -> OwnedFuture<Box<dyn SuccessResponse>, ErrorResponse> {
-        self.inner.borrow().fetch(request)
+        let method = match request.method() {
+            NavigationMethod::Get => "GET",
+            NavigationMethod::Post => "POST",
+        };
+        let req_url = request.url().to_string();
+        let http_log_reg = self.http_log_reg.clone();
+
+        emit_http_log(&http_log_reg, method, &req_url, -1, 0, 0, "");
+
+        let started = std::time::Instant::now();
+        let fut = self.inner.borrow().fetch(request);
+        Box::pin(async move {
+            let res = fut.await;
+            let duration_ms = started.elapsed().as_millis() as u64;
+            match &res {
+                Ok(ok_res) => {
+                    let status = ok_res.status() as i32;
+                    let bytes = ok_res.expected_length().ok().flatten().unwrap_or(0);
+                    let final_url = ok_res.url();
+                    emit_http_log(
+                        &http_log_reg,
+                        method,
+                        final_url.as_ref(),
+                        status,
+                        bytes,
+                        duration_ms,
+                        "",
+                    );
+                }
+                Err(err) => {
+                    let err_msg = format!("{}", err.error);
+                    let final_url = if err.url.is_empty() { &req_url } else { &err.url };
+                    emit_http_log(
+                        &http_log_reg,
+                        method,
+                        final_url,
+                        0,
+                        0,
+                        duration_ms,
+                        &err_msg,
+                    );
+                }
+            }
+            res
+        })
     }
 
     fn resolve_url(&self, url: &str) -> Result<Url, ParseError> {
@@ -458,6 +557,7 @@ pub struct RufflePlayerHandle {
     callback_reg: Arc<Mutex<ExternalCallbackRegistration>>,
     keyboard_reg: Arc<Mutex<VirtualKeyboardCallbackRegistration>>,
     navigate_reg: Arc<Mutex<NavigateUrlCallbackRegistration>>,
+    http_log_reg: Arc<Mutex<HttpLogCallbackRegistration>>,
     spoof_url: Arc<Mutex<Option<Url>>>,
     last_tick_ms: f64,
     last_render_ms: f64,
@@ -546,6 +646,10 @@ pub unsafe extern "C" fn ruffle_player_create(
             callback: None,
             user_data: std::ptr::null_mut(),
         }));
+        let http_log_reg = Arc::new(Mutex::new(HttpLogCallbackRegistration {
+            callback: None,
+            user_data: std::ptr::null_mut(),
+        }));
         let spoof_url = Arc::new(Mutex::new(None));
 
         let default_url = Url::parse("file:///").expect("valid root file URL");
@@ -556,6 +660,7 @@ pub unsafe extern "C" fn ruffle_player_create(
             initial_content,
             spawner.clone(),
             navigate_reg.clone(),
+            http_log_reg.clone(),
         );
 
         let external_provider = AppleExternalInterfaceProvider {
@@ -591,6 +696,7 @@ pub unsafe extern "C" fn ruffle_player_create(
             callback_reg,
             keyboard_reg,
             navigate_reg,
+            http_log_reg,
             spoof_url,
             last_tick_ms: 0.0,
             last_render_ms: 0.0,
@@ -643,6 +749,22 @@ pub unsafe extern "C" fn ruffle_player_set_navigate_url_callback(
     }
     let handle = unsafe { &*handle };
     if let Ok(mut reg) = handle.navigate_reg.lock() {
+        reg.callback = callback;
+        reg.user_data = user_data;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruffle_player_set_http_log_handler(
+    handle: *mut RufflePlayerHandle,
+    callback: RuffleHttpLogCallback,
+    user_data: *mut c_void,
+) {
+    if handle.is_null() {
+        return;
+    }
+    let handle = unsafe { &*handle };
+    if let Ok(mut reg) = handle.http_log_reg.lock() {
         reg.callback = callback;
         reg.user_data = user_data;
     }
